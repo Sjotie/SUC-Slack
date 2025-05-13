@@ -115,6 +115,9 @@ async function processMessageAndGenerateResponse(
     const SENTENCE_END_RE = /[.!?]\s/;        // crude sentence-boundary
     let finalMetadata: Record<string, any> | undefined;
 
+    // --- NEW: lokaal cache-array om alle sectie-blokken bij te houden
+    let postedBlocks: blockKit.Block[] = [];
+
     try {
         // --- START TOEGEVOEGDE CODE ---
         // Haal botUserId op indien nog niet bekend
@@ -152,6 +155,7 @@ async function processMessageAndGenerateResponse(
         });
         thinkingMessageTs = thinkingMessage.ts as string;
         lastMessageTs = thinkingMessageTs;
+        postedBlocks = [];                   // cache reset bij nieuw bericht
         logger.debug(`${logEmoji.slack} Sent thinking message ${thinkingMessageTs} to thread ${threadInfo.threadTs}`);
 
         // 2. Initialize context (fetch history etc.)
@@ -196,17 +200,33 @@ async function processMessageAndGenerateResponse(
         // 4. Process the events from the stream
         async function flushBuffer() {
             if (!lastMessageTs) return;
-            const messageUpdate = blockKit.aiResponseMessage(
-                accumulatedContent + chunkBuffer
-            );
+
+            // Bouw blokken voor *alle* content tot nu toe
+            const msg = blockKit.aiResponseMessage(accumulatedContent + chunkBuffer);
+
+            // Bepaal welke blokken nog niet gepost zijn
+            const newBlocks = msg.blocks.slice(postedBlocks.length);
+            if (newBlocks.length === 0) return;          // niets nieuws
+
+            postedBlocks.push(...newBlocks);
+
+            // Slack-limiet 50 blokken: behoud de laatste 50
+            const blocksToSend =
+                postedBlocks.length > 50
+                    ? postedBlocks.slice(-50)
+                    : postedBlocks;
+
             await conversationUtils.updateMessage(
                 app,
                 threadInfo.channelId,
                 lastMessageTs,
-                messageUpdate.blocks as any[],
-                messageUpdate.text
+                blocksToSend as any[],
+                // fallback-tekst: eerste 150 tekens van de meest recente sectie
+                newBlocks[newBlocks.length - 1]?.text?.slice?.(0, 150) ?? msg.text
             );
-            logger.debug(`${logEmoji.slack} Flushed content to message ${lastMessageTs}`);
+            logger.debug(
+                `${logEmoji.slack} Flushed ${newBlocks.length} new block(s); total now ${postedBlocks.length}`
+            );
         }
 
         for await (const event of eventStream) {
@@ -269,6 +289,7 @@ async function processMessageAndGenerateResponse(
                         toolMessageTs = toolThinkingMsg.ts as string;   // remember it
                         lastMessageTs = toolThinkingMsg.ts as string;
                         accumulatedContent = '';
+                        postedBlocks = [];                              // cache reset voor dit nieuwe bericht
                         logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${toolName}`);
                     } catch (postError) {
                         logger.error(`${logEmoji.error} Failed to post tool usage message`, { postError });
@@ -331,24 +352,23 @@ async function processMessageAndGenerateResponse(
         }
 
         // 5. Final update after the stream
-        const finalPayload = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
+        const finalMsg = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
 
         if (lastMessageTs) {
-            // We still have an in-progress preview message  update it
-            logger.info(`${logEmoji.slack} Stream finished. Updating final message ${lastMessageTs}.`);
+            // we hebben nog een preview-bericht om bij te werken
             await conversationUtils.updateMessage(
                 app,
                 threadInfo.channelId,
                 lastMessageTs,
-                finalPayload.blocks as any[],
-                finalPayload.text
+                finalMsg.blocks as any[],
+                finalMsg.text
             );
         } else {
-            // No preview message left (most recent was the tool block)  post a **new** one
+            // laatste zichtbare bericht was een tool-resultaat  plaats nu een nieuw AI-antwoord
             const res = await client.chat.postMessage({
                 channel: threadInfo.channelId,
                 thread_ts: threadInfo.threadTs,
-                ...finalPayload,
+                ...finalMsg,
             });
             lastMessageTs = res.ts as string;
         }
