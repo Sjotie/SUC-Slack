@@ -162,7 +162,10 @@ async def log_all_mcp_tools():
             tools = await mcp_server.list_tools()
             print(f"TOOLS ({mcp_server.name}):")
             for tool in tools:
-                print(f"  - {tool.get('name', '<unnamed>')}: {tool.get('description', '')}")
+                # Use attribute access if dict .get() fails
+                name = getattr(tool, "name", None) or (tool["name"] if isinstance(tool, dict) and "name" in tool else "<unnamed>")
+                desc = getattr(tool, "description", None) or (tool["description"] if isinstance(tool, dict) and "description" in tool else "")
+                print(f"  - {name}: {desc}")
         except Exception as e:
             print(f"ERROR: Could not list tools for MCP server '{mcp_server.name}': {e}")
 
