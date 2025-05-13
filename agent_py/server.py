@@ -146,6 +146,71 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                             await asyncio.sleep(0.01)
                         except Exception as ser_err:
                             print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_call: {ser_err}")
+
+                    # --- NEW: Handle tool/function calls from RunItemStreamEvent/tool_call_item ---
+                    elif event.type == "run_item_stream_event":
+                        # The logs show: RunItemStreamEvent(name='tool_called', item=ToolCallItem(..., raw_item=ResponseFunctionToolCall(...)))
+                        # We want to emit a tool_calls event for these as well.
+                        event_name = getattr(event, "name", None)
+                        if event_name == "tool_called":
+                            tool_item = getattr(event, "item", None)
+                            if tool_item is not None:
+                                # Try to extract from raw_item if present
+                                raw_item = getattr(tool_item, "raw_item", None)
+                                if raw_item and isinstance(raw_item, dict):
+                                    call_name = raw_item.get("name") or raw_item.get("tool_name")
+                                    call_args = raw_item.get("arguments") or raw_item.get("args")
+                                    # If arguments is a JSON string, parse it
+                                    if isinstance(call_args, str):
+                                        try:
+                                            call_args = json.loads(call_args)
+                                        except Exception:
+                                            pass
+                                else:
+                                    call_name = getattr(tool_item, "name", None)
+                                    call_args = getattr(tool_item, "arguments", None) or getattr(tool_item, "args", None)
+                                    # If arguments is a JSON string, parse it
+                                    if isinstance(call_args, str):
+                                        try:
+                                            call_args = json.loads(call_args)
+                                        except Exception:
+                                            pass
+                                # Truncate arguments for log
+                                if call_args is not None:
+                                    try:
+                                        call_args_str = json.dumps(call_args)
+                                    except Exception:
+                                        call_args_str = str(call_args)
+                                    if len(call_args_str) > 300:
+                                        call_args_str = call_args_str[:300] + "...[truncated]"
+                                else:
+                                    call_args_str = "<none>"
+                                print(f"========== MCP/TOOL CALL (run_item_stream_event) ==========")
+                                print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
+                                print(f"==========================================================")
+
+                                # Emit the tool_calls event
+                                try:
+                                    yield (
+                                        json.dumps(
+                                            {
+                                                "type": "tool_calls",
+                                                "data": [
+                                                    {
+                                                        "function": {
+                                                            "name": call_name,
+                                                            "arguments": call_args,
+                                                        },
+                                                        "name": call_name
+                                                    }
+                                                ],
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+                                    await asyncio.sleep(0.01)
+                                except Exception as ser_err:
+                                    print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_call (run_item_stream_event): {ser_err}")
                     # Tool/function result
                     elif event.type in ("tool_result", "function_result"):
                         result = getattr(event, "result", None) or getattr(event, "data", None)
