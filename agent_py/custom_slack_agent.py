@@ -75,7 +75,7 @@ class FilteredMCPServerSse(MCPServerSse):
             desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
             print(f"  - {name}: {desc}")
 
-        # Per-user filtering logic
+        # Per-user filtering logic (fix: match with trailing underscore and username, case-insensitive)
         user_tool_suffix = None
         if slack_user_id and slack_user_id in self._user_tool_map:
             user_tool_suffix = self._user_tool_map[slack_user_id]
@@ -84,7 +84,11 @@ class FilteredMCPServerSse(MCPServerSse):
             seen = set()
             for tool in tools:
                 name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-                if name and name.lower().endswith(user_tool_suffix) and name not in seen:
+                # Match tools that end with _<username> (case-insensitive, with or without trailing underscore)
+                if name and (
+                    name.lower().endswith(f"_{user_tool_suffix.lower()}")
+                    or name.lower().endswith(f"_{user_tool_suffix.lower()}/")  # just in case
+                ) and name not in seen:
                     filtered.append(tool)
                     seen.add(name)
             print(f"DEBUG: Tools available AFTER filter ({self.name}):")
