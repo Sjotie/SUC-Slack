@@ -53,16 +53,49 @@ class FilteredMCPServerSse(MCPServerSse):
     def __init__(self, *args, allowed_tools=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._allowed_tools = set(allowed_tools) if allowed_tools else None
+        self._user_tool_map = {
+            "U07G1UMQ64C": "wouter",
+            "U08K4SFL5LP": "leonie",
+            "U08K6QFBPB9": "sjoerd",
+        }
 
     async def list_tools(self, *args, **kwargs):
+        # Try to get the Slack user ID from the current request context if available
+        import contextvars
+        slack_user_id = None
+        try:
+            slack_user_id = contextvars.ContextVar("slack_user_id").get()
+        except Exception:
+            pass
+
         tools = await super().list_tools(*args, **kwargs)
         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
         for tool in tools:
             name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
             desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
             print(f"  - {name}: {desc}")
+
+        # Per-user filtering logic
+        user_tool_suffix = None
+        if slack_user_id and slack_user_id in self._user_tool_map:
+            user_tool_suffix = self._user_tool_map[slack_user_id]
+            print(f"DEBUG: Filtering Make tools for Slack user {slack_user_id} ({user_tool_suffix})")
+            filtered = []
+            seen = set()
+            for tool in tools:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                if name and name.lower().endswith(user_tool_suffix) and name not in seen:
+                    filtered.append(tool)
+                    seen.add(name)
+            print(f"DEBUG: Tools available AFTER filter ({self.name}):")
+            for tool in filtered:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+                print(f"  - {name}: {desc}")
+            return filtered
+
+        # Fallback to allowed_tools if set
         if self._allowed_tools is not None:
-            # tools can be dicts or objects with .name
             filtered = []
             seen = set()
             for tool in tools:

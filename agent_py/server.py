@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import json
@@ -6,6 +6,7 @@ import os
 import asyncio
 import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
+import contextvars
 
 # ------------------------------------------------------------------
 # Verhoog de standaard-limiet van 10 beurten in de Agents-SDK.
@@ -380,7 +381,11 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
 
 
 @app.post("/generate")
-async def generate_stream(req: ChatRequest):
+async def generate_stream(req: ChatRequest, request: Request):
+    # Set the slack_user_id in a context variable for downstream use in tool filtering
+    slack_user_id_var = contextvars.ContextVar("slack_user_id")
+    if req.slackUserId:
+        slack_user_id_var.set(req.slackUserId)
     print(f"PY_AGENT_DEBUG (/generate): Received request. Prompt type: {type(req.prompt)}")
     if isinstance(req.prompt, list):
         # Log only a summary if prompt is a list to avoid huge logs, e.g., for images
