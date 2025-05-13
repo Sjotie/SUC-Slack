@@ -149,36 +149,31 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
 
                     # --- NEW: Handle tool/function calls from RunItemStreamEvent/tool_call_item ---
                     elif event.type == "run_item_stream_event":
-                        # The logs show: RunItemStreamEvent(name='tool_called', item=ToolCallItem(..., raw_item=ResponseFunctionToolCall(...)))
-                        # We want to emit a tool_calls event for these as well.
+                        # Handle `run_item_stream_event` variations
                         event_name = getattr(event, "name", None)
+
+                        # ---------- 1. tool_called    tool_calls ----------
                         if event_name == "tool_called":
                             tool_item = getattr(event, "item", None)
                             if tool_item is not None:
-                                # Try to extract from raw_item if present
                                 raw_item = getattr(tool_item, "raw_item", None)
-                                if raw_item:
-                                    # Try dict first, else fallback to object attributes
-                                    if isinstance(raw_item, dict):
-                                        call_name = raw_item.get("name") or raw_item.get("tool_name")
-                                        call_args = raw_item.get("arguments") or raw_item.get("args")
-                                    else:
-                                        call_name = getattr(raw_item, "name", None) or getattr(raw_item, "tool_name", None)
-                                        call_args = getattr(raw_item, "arguments", None) or getattr(raw_item, "args", None)
-                                    # If arguments is a JSON string, parse it
-                                    if isinstance(call_args, str):
-                                        try:
-                                            call_args = json.loads(call_args)
-                                        except Exception:
-                                            pass
-                                else:
-                                    call_name = getattr(tool_item, "name", None)
-                                    call_args = getattr(tool_item, "arguments", None) or getattr(tool_item, "args", None)
-                                    if isinstance(call_args, str):
-                                        try:
-                                            call_args = json.loads(call_args)
-                                        except Exception:
-                                            pass
+
+                                # helper om eigenschappen veilig op te halen
+                                def _get_attr(obj, *names):
+                                    for n in names:
+                                        if hasattr(obj, n):
+                                            return getattr(obj, n)
+                                    return None
+
+                                call_name = _get_attr(raw_item, "name", "tool_name") or _get_attr(tool_item, "name", "tool_name")
+                                call_args = _get_attr(raw_item, "arguments", "args") or _get_attr(tool_item, "arguments", "args")
+
+                                # Parse JSON-string naar dict indien nodig
+                                if isinstance(call_args, str):
+                                    try:
+                                        call_args = json.loads(call_args)
+                                    except Exception:
+                                        pass
                                 # Truncate arguments for log
                                 if call_args is not None:
                                     try:
@@ -215,6 +210,39 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                                     await asyncio.sleep(0.01)
                                 except Exception as ser_err:
                                     print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_call (run_item_stream_event): {ser_err}")
+
+                        # ---------- 2. tool_output    tool_result ----------
+                        elif event_name == "tool_output":
+                            output_item = getattr(event, "item", None)
+                            if output_item is not None:
+                                raw_item = getattr(output_item, "raw_item", None)
+                                result_data = None
+
+                                if raw_item is not None:
+                                    result_data = getattr(raw_item, "output", None)
+                                if result_data is None:
+                                    result_data = getattr(output_item, "output", None)
+
+                                # Parse JSON-string indien nodig
+                                if isinstance(result_data, str):
+                                    try:
+                                        result_data = json.loads(result_data)
+                                    except Exception:
+                                        pass
+
+                                try:
+                                    yield (
+                                        json.dumps(
+                                            {
+                                                "type": "tool_result",
+                                                "data": {"result": result_data},
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+                                    await asyncio.sleep(0.01)
+                                except Exception as ser_err:
+                                    print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_result (run_item_stream_event): {ser_err}")
                     # Tool/function result
                     elif event.type in ("tool_result", "function_result"):
                         result = getattr(event, "result", None) or getattr(event, "data", None)
