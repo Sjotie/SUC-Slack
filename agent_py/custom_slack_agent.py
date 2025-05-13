@@ -48,41 +48,43 @@ primary_railway_mcp_server = MCPServerSse(
 )
 
 # --- NEW: EU2 Make.com MCP server (SSE) ---
-# eu2_make_server_url = "https://eu2.make.com/mcp/api/v1/u/6d0262c3-9c24-4f3d-a836-aab12ac5674a/sse"
-# class FilteredMCPServerSse(MCPServerSse):
-#     def __init__(self, *args, allowed_tools=None, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self._allowed_tools = set(allowed_tools) if allowed_tools else None
-#
-#     async def list_tools(self, *args, **kwargs):
-#         tools = await super().list_tools(*args, **kwargs)
-#         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
-#         for tool in tools:
-#             name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-#             desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
-#             print(f"  - {name}: {desc}")
-#         if self._allowed_tools is not None:
-#             # tools can be dicts or objects with .name
-#             filtered = []
-#             for tool in tools:
-#                 name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-#                 if name in self._allowed_tools:
-#                     filtered.append(tool)
-#             print(f"DEBUG: Tools available AFTER filter ({self.name}):")
-#             for tool in filtered:
-#                 name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-#                 desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
-#                 print(f"  - {name}: {desc}")
-#             return filtered
-#         return tools
-#
-# eu2_make_mcp_server = FilteredMCPServerSse(
-#     name="eu2_make",
-#     params={"url": eu2_make_server_url},
-#     client_session_timeout_seconds=60.0,
-#     cache_tools_list=True,
-#     allowed_tools=["scenario_5209853_get_meeting_transcripts_from_fireflies"]
-# )
+eu2_make_server_url = "https://eu2.make.com/mcp/api/v1/u/6d0262c3-9c24-4f3d-a836-aab12ac5674a/sse"
+class FilteredMCPServerSse(MCPServerSse):
+    def __init__(self, *args, allowed_tools=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._allowed_tools = set(allowed_tools) if allowed_tools else None
+
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
+        for tool in tools:
+            name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+            print(f"  - {name}: {desc}")
+        if self._allowed_tools is not None:
+            # tools can be dicts or objects with .name
+            filtered = []
+            seen = set()
+            for tool in tools:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                if name in self._allowed_tools and name not in seen:
+                    filtered.append(tool)
+                    seen.add(name)
+            print(f"DEBUG: Tools available AFTER filter ({self.name}):")
+            for tool in filtered:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+                print(f"  - {name}: {desc}")
+            return filtered
+        return tools
+
+eu2_make_mcp_server = FilteredMCPServerSse(
+    name="eu2_make",
+    params={"url": eu2_make_server_url},
+    client_session_timeout_seconds=60.0,
+    cache_tools_list=True,
+    allowed_tools=["scenario_5209853_get_meeting_transcripts_from_fireflies"]
+)
 
 # --- HubSpot MCP Server definition ---
 # hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
@@ -173,7 +175,7 @@ _agent = Agent(
     name="SlackAssistant",
     model=os.getenv("AGENT_MODEL", "gpt-4o"),
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, slack_mcp_server],  # Removed eu2_make_mcp_server
+    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],  # Added eu2_make_mcp_server back
 )
 
 # For easier access in server.py, you can create a list of active servers
@@ -184,7 +186,7 @@ import asyncio
 
 async def log_all_mcp_tools():
     print("INFO: Listing all available tools from each MCP server (after connect)...")
-    for mcp_server in [primary_railway_mcp_server, slack_mcp_server]:
+    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server]:
         try:
             await mcp_server.connect()
             tools = await mcp_server.list_tools()
