@@ -358,6 +358,21 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                     await asyncio.sleep(0.5)   # brief back-off
                     continue                   # restart the outer while-loop
 
+                # If out of attempts, notify the AI model and user
+                error_tool_name = None
+                import re
+                match = re.search(r"Tool ([\w\d_]+) not found in agent", str(e))
+                if match:
+                    error_tool_name = match.group(1)
+                error_msg = (
+                    f"De gevraagde tool '{error_tool_name}' is niet beschikbaar voor deze gebruiker of is niet correct geconfigureerd. "
+                    "Probeer een andere tool of neem contact op met de beheerder."
+                )
+                # Yield a final_message event to the AI client so it can show this as a user-facing message
+                yield f"{json.dumps({'type': 'final_message', 'data': {'content': error_msg, 'metadata': {'error': 'tool_not_found', 'tool': error_tool_name}}})}\n"
+                await asyncio.sleep(0.01)
+                break
+
             # Check if it's a ClosedResourceError and try to reset the MCP connection flag
             if isinstance(e, anyio.ClosedResourceError):
                 print(f"PY_AGENT_WARNING (stream_agent_events): ClosedResourceError detected. Resetting MCP connection flag.")
