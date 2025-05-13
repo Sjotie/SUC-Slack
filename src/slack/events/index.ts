@@ -202,7 +202,7 @@ async function processMessageAndGenerateResponse(
                     // prevent awkward mid-word breaks caused by irregular SSE
                     // chunk sizes.  A single growing section is fine here.
                     const messageUpdate = blockKit.streamingPreviewMessage(
-                        accumulatedContent + ' '
+                        accumulatedContent + ' '   // trimmed inside util
                     );
                     await conversationUtils.updateMessage(
                         app,

@@ -404,12 +404,20 @@ export function loadingMessage(message: string = 'Processing your request...'): 
  * `aiResponseMessage` once the final chunk is received.
  */
 export function streamingPreviewMessage(
-    content: string
+    content: string,
+    maxChars: number = 350        // keep preview short to avoid Slack Read more
 ): { blocks: Block[]; text: string } {
-    const safe = content.length ? content : '';
+    if (!content.length) content = '';
+
+    let preview = content;
+    if (content.length > maxChars) {
+        // show only the tail so the latest text is visible
+        preview = ' ' + content.slice(-maxChars);
+    }
+
     return {
-        blocks: [ section(safe) ],
-        text: safe.slice(0, 150),
+        blocks: [ section(preview) ],
+        text: preview.slice(0, 150),
     };
 }
 
