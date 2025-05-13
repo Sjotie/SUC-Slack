@@ -16,6 +16,8 @@ except ModuleNotFoundError:
 from custom_slack_agent import _agent, ACTIVE_MCP_SERVERS
 
 from openai.types.responses import ResponseTextDeltaEvent
+#  Well need the SDK exception class for targeted retries
+from agents.exceptions import ModelBehaviorError
 
 app = FastAPI(title="Slack-Agent API")
 
@@ -50,140 +52,164 @@ class ChatResponse(BaseModel):
 
 # --- Streaming generator for agent events ---
 # (No longer manages connect/cleanup, only yields agent events)
-async def stream_agent_events(agent, messages):
+async def stream_agent_events(agent, messages, *, max_retries: int = 2):
     print(f"PY_AGENT_DEBUG (stream_agent_events): Starting agent stream. Number of messages: {len(messages)}")
-    if messages:
-        print(f"PY_AGENT_DEBUG (stream_agent_events): First message: {messages[0]}")
-        print(f"PY_AGENT_DEBUG (stream_agent_events): Last message: {messages[-1]}")
-    # For very detailed debugging of all messages (can be verbose):
-    # print(f"PY_AGENT_DEBUG (stream_agent_events): Full messages list: {messages}")
-    try:
-        run_result = Runner.run_streamed(agent, messages)
-        print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
-        async for event in run_result.stream_events():
-            # Let's log the raw event type before your processing
-            raw_event_type = 'unknown_raw'
-            if hasattr(event, 'type'):
-                raw_event_type = event.type
-            elif hasattr(event, 'event') and isinstance(event.event, str): # For some SDK versions
-                 raw_event_type = event.event
 
-            print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
+    # ------------------------------------------------------------------
+    # Automatic retry loop for the well-known duplicated-tool-name bug
+    # (Tool web_searchweb_search not found in agent , raised as
+    # `agents.exceptions.ModelBehaviorError`).  We retry the whole turn
+    # up to `max_retries` times before surfacing the error.
+    # ------------------------------------------------------------------
+    attempts_left = max_retries
 
-            # --- MCP/Tool use logging ---
-            # Detect tool/function call events and log them
-            # Common event types: 'tool_call', 'tool_result', 'tool_error', 'function_call', 'function_result', etc.
-            # Also log errors and truncated payloads for debugging.
-            if hasattr(event, 'type'):
-                # Tool/function call initiated
-                if event.type in ("tool_call", "function_call"):
-                    # Try to extract function/tool name and arguments
-                    call_name = getattr(event, "name", None) or getattr(event, "tool_name", None)
-                    call_args = getattr(event, "arguments", None) or getattr(event, "args", None)
-                    # Truncate arguments for log
-                    if call_args is not None:
+    while True:        # <-- everything that follows is now inside this loop
+        if messages:
+            print(f"PY_AGENT_DEBUG (stream_agent_events): First message: {messages[0]}")
+            print(f"PY_AGENT_DEBUG (stream_agent_events): Last message: {messages[-1]}")
+        # For very detailed debugging of all messages (can be verbose):
+        # print(f"PY_AGENT_DEBUG (stream_agent_events): Full messages list: {messages}")
+        try:
+            run_result = Runner.run_streamed(agent, messages)
+            print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
+            async for event in run_result.stream_events():
+                # Let's log the raw event type before your processing
+                raw_event_type = 'unknown_raw'
+                if hasattr(event, 'type'):
+                    raw_event_type = event.type
+                elif hasattr(event, 'event') and isinstance(event.event, str): # For some SDK versions
+                     raw_event_type = event.event
+
+                print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
+
+                # --- MCP/Tool use logging ---
+                # Detect tool/function call events and log them
+                # Common event types: 'tool_call', 'tool_result', 'tool_error', 'function_call', 'function_result', etc.
+                # Also log errors and truncated payloads for debugging.
+                if hasattr(event, 'type'):
+                    # Tool/function call initiated
+                    if event.type in ("tool_call", "function_call"):
+                        # Try to extract function/tool name and arguments
+                        call_name = getattr(event, "name", None) or getattr(event, "tool_name", None)
+                        call_args = getattr(event, "arguments", None) or getattr(event, "args", None)
+                        # Truncate arguments for log
+                        if call_args is not None:
+                            try:
+                                call_args_str = json.dumps(call_args)
+                            except Exception:
+                                call_args_str = str(call_args)
+                            if len(call_args_str) > 300:
+                                call_args_str = call_args_str[:300] + "...[truncated]"
+                        else:
+                            call_args_str = "<none>"
+                        print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
+                    # Tool/function result
+                    elif event.type in ("tool_result", "function_result"):
+                        result = getattr(event, "result", None) or getattr(event, "data", None)
                         try:
-                            call_args_str = json.dumps(call_args)
+                            result_str = json.dumps(result)
                         except Exception:
-                            call_args_str = str(call_args)
-                        if len(call_args_str) > 300:
-                            call_args_str = call_args_str[:300] + "...[truncated]"
-                    else:
-                        call_args_str = "<none>"
-                    print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
-                # Tool/function result
-                elif event.type in ("tool_result", "function_result"):
-                    result = getattr(event, "result", None) or getattr(event, "data", None)
-                    try:
-                        result_str = json.dumps(result)
-                    except Exception:
-                        result_str = str(result)
-                    if len(result_str) > 300:
-                        result_str = result_str[:300] + "...[truncated]"
-                    print(f"PY_AGENT_MCP (tool_result): Tool/function result: {result_str}")
-                # Tool/function error
-                elif event.type in ("tool_error", "function_error"):
-                    error_info = getattr(event, "error", None) or getattr(event, "data", None)
-                    try:
-                        error_str = json.dumps(error_info)
-                    except Exception:
-                        error_str = str(error_info)
-                    if len(error_str) > 300:
-                        error_str = error_str[:300] + "...[truncated]"
-                    print(f"PY_AGENT_MCP (tool_error): Tool/function error: {error_str}")
+                            result_str = str(result)
+                        if len(result_str) > 300:
+                            result_str = result_str[:300] + "...[truncated]"
+                        print(f"PY_AGENT_MCP (tool_result): Tool/function result: {result_str}")
+                    # Tool/function error
+                    elif event.type in ("tool_error", "function_error"):
+                        error_info = getattr(event, "error", None) or getattr(event, "data", None)
+                        try:
+                            error_str = json.dumps(error_info)
+                        except Exception:
+                            error_str = str(error_info)
+                        if len(error_str) > 300:
+                            error_str = error_str[:300] + "...[truncated]"
+                        print(f"PY_AGENT_MCP (tool_error): Tool/function error: {error_str}")
 
-            # --- Start of your existing event processing logic for 'raw_response_event' etc.
-            if (
-                hasattr(event, 'type') and event.type == "raw_response_event"
-                and isinstance(event.data, ResponseTextDeltaEvent)
-            ):
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Yielding llm_chunk: {event.data.delta}")
-                yield f"{json.dumps({'type': 'llm_chunk', 'data': event.data.delta})}\n"
-                await asyncio.sleep(0.01)
-                continue
-
-            if hasattr(event, 'type') and event.type == "raw_response_event":
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring raw_response_event (not ResponseTextDeltaEvent). Data: {type(event.data)}")
-                continue
-
-            if hasattr(event, 'type') and event.type in (
-                "agent_updated_stream_event",
-                "run_item_stream_event",
-            ):
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring SDK chatter event: {event.type}")
-                continue
-            
-            # Fallback processing
-            output_event = None
-            event_type_str = 'unknown_fallback'
-            event_data_processed = None
-            try:
-                event_type_str = getattr(event, 'type', 'unknown_fallback_attr')
-                event_data_raw = getattr(event, 'data', None)
-                try:
-                    json.dumps(event_data_raw) # Test serializability
-                    event_data_processed = event_data_raw
-                except TypeError:
-                    print(f"PY_AGENT_DEBUG (stream_agent_events): Warning: Event data for type '{event_type_str}' is not directly JSON serializable. Converting to string.")
-                    event_data_processed = str(event_data_raw)
-                output_event = {"type": event_type_str, "data": event_data_processed}
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Streaming event (fallback): type='{event_type_str}'")
-            except Exception as processing_error:
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Error processing event structure: {processing_error}")
-                output_event = {"type": "processing_error", "data": f"Failed to process event: {str(processing_error)}"}
-            
-            if output_event:
-                try:
-                    yield f"{json.dumps(output_event)}\n"
+                # --- Start of your existing event processing logic for 'raw_response_event' etc.
+                if (
+                    hasattr(event, 'type') and event.type == "raw_response_event"
+                    and isinstance(event.data, ResponseTextDeltaEvent)
+                ):
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Yielding llm_chunk: {event.data.delta}")
+                    yield f"{json.dumps({'type': 'llm_chunk', 'data': event.data.delta})}\n"
                     await asyncio.sleep(0.01)
-                except TypeError as json_error:
-                    print(f"PY_AGENT_DEBUG (stream_agent_events): Error serializing processed event to JSON: {json_error}")
-                    yield f"{json.dumps({'type': 'error', 'data': f'JSON serialization error for event type {event_type_str}'})}\n"
-                    await asyncio.sleep(0.01)
-            # --- End of your existing event processing logic
-            
-    except Exception as e:
-        # This will catch errors from Runner.run_streamed or during the async for loop setup
-        print(f"PY_AGENT_ERROR (stream_agent_events): Exception during agent streaming execution: {str(e)}")
-        print(f"PY_AGENT_ERROR (stream_agent_events): Traceback: {traceback.format_exc()}")
+                    continue
 
-        # Check if it's a ClosedResourceError and try to reset the MCP connection flag
-        if isinstance(e, anyio.ClosedResourceError):
-            print(f"PY_AGENT_WARNING (stream_agent_events): ClosedResourceError detected. Resetting MCP connection flag.")
-            # Try to reset the _connected flag on the global railway_mcp_server object
-            if 'railway_mcp_server' in globals():
-                railway = globals()['railway_mcp_server']
-                if hasattr(railway, "_connected"):
+                if hasattr(event, 'type') and event.type == "raw_response_event":
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring raw_response_event (not ResponseTextDeltaEvent). Data: {type(event.data)}")
+                    continue
+
+                if hasattr(event, 'type') and event.type in (
+                    "agent_updated_stream_event",
+                    "run_item_stream_event",
+                ):
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring SDK chatter event: {event.type}")
+                    continue
+                
+                # Fallback processing
+                output_event = None
+                event_type_str = 'unknown_fallback'
+                event_data_processed = None
+                try:
+                    event_type_str = getattr(event, 'type', 'unknown_fallback_attr')
+                    event_data_raw = getattr(event, 'data', None)
                     try:
-                        setattr(railway, "_connected", False)
-                        print(f"PY_AGENT_DEBUG (stream_agent_events): MCP _connected flag reset to False.")
-                    except Exception as flag_err:
-                        print(f"PY_AGENT_ERROR (stream_agent_events): Could not reset MCP flag: {flag_err}")
+                        json.dumps(event_data_raw) # Test serializability
+                        event_data_processed = event_data_raw
+                    except TypeError:
+                        print(f"PY_AGENT_DEBUG (stream_agent_events): Warning: Event data for type '{event_type_str}' is not directly JSON serializable. Converting to string.")
+                        event_data_processed = str(event_data_raw)
+                    output_event = {"type": event_type_str, "data": event_data_processed}
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Streaming event (fallback): type='{event_type_str}'")
+                except Exception as processing_error:
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Error processing event structure: {processing_error}")
+                    output_event = {"type": "processing_error", "data": f"Failed to process event: {str(processing_error)}"}
+                
+                if output_event:
+                    try:
+                        yield f"{json.dumps(output_event)}\n"
+                        await asyncio.sleep(0.01)
+                    except TypeError as json_error:
+                        print(f"PY_AGENT_DEBUG (stream_agent_events): Error serializing processed event to JSON: {json_error}")
+                        yield f"{json.dumps({'type': 'error', 'data': f'JSON serialization error for event type {event_type_str}'})}\n"
+                        await asyncio.sleep(0.01)
+                # --- End of your existing event processing logic
+                
+        except Exception as e:
+            # This will catch errors from Runner.run_streamed or during the async for loop setup
+            print(f"PY_AGENT_ERROR (stream_agent_events): Exception during agent streaming execution: {str(e)}")
+            print(f"PY_AGENT_ERROR (stream_agent_events): Traceback: {traceback.format_exc()}")
 
-        yield f"{json.dumps({'type': 'error', 'data': f'Agent execution failed: {str(e)}'})}\n"
-        await asyncio.sleep(0.01)
-    finally:
-        print("PY_AGENT_DEBUG (stream_agent_events): Agent stream generator finished.")
+            # --- Automatic retry for duplicated-tool-name ModelBehaviorError ---
+            if isinstance(e, ModelBehaviorError) and "not found in agent" in str(e):
+                if attempts_left > 0:
+                    print(
+                        f"PY_AGENT_WARNING (stream_agent_events): Retrying turn "
+                        f"because of ModelBehaviorError. Attempts left: {attempts_left}"
+                    )
+                    attempts_left -= 1
+                    await asyncio.sleep(0.5)   # brief back-off
+                    continue                   # restart the outer while-loop
+
+            # Check if it's a ClosedResourceError and try to reset the MCP connection flag
+            if isinstance(e, anyio.ClosedResourceError):
+                print(f"PY_AGENT_WARNING (stream_agent_events): ClosedResourceError detected. Resetting MCP connection flag.")
+                # Try to reset the _connected flag on the global railway_mcp_server object
+                if 'railway_mcp_server' in globals():
+                    railway = globals()['railway_mcp_server']
+                    if hasattr(railway, "_connected"):
+                        try:
+                            setattr(railway, "_connected", False)
+                            print(f"PY_AGENT_DEBUG (stream_agent_events): MCP _connected flag reset to False.")
+                        except Exception as flag_err:
+                            print(f"PY_AGENT_ERROR (stream_agent_events): Could not reset MCP flag: {flag_err}")
+
+            yield f"{json.dumps({'type': 'error', 'data': f'Agent execution failed: {str(e)}'})}\n"
+            await asyncio.sleep(0.01)
+        finally:
+            print("PY_AGENT_DEBUG (stream_agent_events): Agent stream generator finished.")
+
+        # Successful completion  break out of the retry loop
+        break
 
 
 @app.post("/generate")
