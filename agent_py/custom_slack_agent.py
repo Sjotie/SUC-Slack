@@ -76,7 +76,7 @@ class FilteredMCPServerSse(MCPServerSse):
             desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
             print(f"  - {name}: {desc}")
 
-        # Per-user filtering logic (fix: match with trailing underscore and username, case-insensitive)
+        # Per-user filtering logic (match username anywhere in tool name or description, case-insensitive)
         user_tool_suffix = None
         if slack_user_id and slack_user_id in self._user_tool_map:
             user_tool_suffix = self._user_tool_map[slack_user_id]
@@ -88,8 +88,8 @@ class FilteredMCPServerSse(MCPServerSse):
                 desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
 
                 match_for_user = False
-                # 1) tool **name** ends with "_<username>"
-                if name and name.lower().endswith(f"_{user_tool_suffix.lower()}"):
+                # 1) tool **name** contains username (case-insensitive)
+                if name and user_tool_suffix.lower() in name.lower():
                     match_for_user = True
                 # 2) tool **description** contains "| <Username>" (Makes default suffix)
                 elif desc and f"| {user_tool_suffix}".lower() in desc.lower():
