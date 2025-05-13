@@ -106,6 +106,8 @@ async function processMessageAndGenerateResponse(
 ): Promise<void> {
     let thinkingMessageTs: string | undefined;
     let lastMessageTs: string | undefined;
+    // NEW  keep a separate handle on the tool-call message so we dont overwrite it later
+    let toolMessageTs: string | undefined;
     let accumulatedContent = '';
     let currentToolName: string | undefined;
     let chunkBuffer = '';
@@ -249,6 +251,7 @@ async function processMessageAndGenerateResponse(
                             thread_ts: threadInfo.threadTs,
                             ...blockKit.functionCallMessage(currentToolName || 'tool', 'start', argPreview),
                         });
+                        toolMessageTs = toolThinkingMsg.ts as string;   // remember it
                         lastMessageTs = toolThinkingMsg.ts as string;
                         accumulatedContent = '';
                         logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${currentToolName}`);
@@ -259,10 +262,10 @@ async function processMessageAndGenerateResponse(
                     break;
 
                 case 'tool_result':
-                    if (lastMessageTs) {
+                    if (toolMessageTs) {
                         const toolResultData = event.data?.result ?? event.data;
                         const resultSummary = typeof toolResultData === 'string'
-                            ? toolResultData.substring(0, 120) + ''
+                            ? toolResultData.substring(0, 120)
                             : '[resultaat ontvangen]';
                         const messageUpdate = blockKit.functionCallMessage(
                             currentToolName || event.data?.tool_name || 'tool',
@@ -272,11 +275,14 @@ async function processMessageAndGenerateResponse(
                         await conversationUtils.updateMessage(
                             app,
                             threadInfo.channelId,
-                            lastMessageTs,
+                            toolMessageTs,                                // update the *tool* message only
                             messageUpdate.blocks as any[],
                             messageUpdate.text
                         );
-                        logger.info(`${logEmoji.slack} Updated tool usage message ${lastMessageTs} with result.`);
+                        logger.info(`${logEmoji.slack} Updated tool usage message ${toolMessageTs} with result.`);
+
+                        //  From here on we want a *new* message for the assistant reply
+                        lastMessageTs = undefined;
                     }
                     break;
 
@@ -309,20 +315,29 @@ async function processMessageAndGenerateResponse(
         }
 
         // 5. Final update after the stream
+        const finalPayload = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
+
         if (lastMessageTs) {
+            // We still have an in-progress preview message  update it
             logger.info(`${logEmoji.slack} Stream finished. Updating final message ${lastMessageTs}.`);
-            const finalMessage = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
             await conversationUtils.updateMessage(
                 app,
                 threadInfo.channelId,
                 lastMessageTs,
-                finalMessage.blocks as any[],
-                finalMessage.text
+                finalPayload.blocks as any[],
+                finalPayload.text
             );
-            conversationUtils.addAssistantMessageToThread(threadInfo, accumulatedContent);
         } else {
-            logger.error(`${logEmoji.error} No message TS found to update after stream completed.`);
+            // No preview message left (most recent was the tool block)  post a **new** one
+            const res = await client.chat.postMessage({
+                channel: threadInfo.channelId,
+                thread_ts: threadInfo.threadTs,
+                ...finalPayload,
+            });
+            lastMessageTs = res.ts as string;
         }
+
+        conversationUtils.addAssistantMessageToThread(threadInfo, accumulatedContent);
 
     } catch (error) {
         logger.error(`${logEmoji.error} Error processing message stream or initial setup`, {
