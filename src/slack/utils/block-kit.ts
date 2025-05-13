@@ -505,9 +505,10 @@ export function aiResponseMessage(
     if (functionResults && functionResults.length > 0) {
         blocks.push(divider());
         for (const result of functionResults) {
-            // Ensure function results are also split if they are too long
-            const resultSections = createBlocksFromContent(mrkdwn(`\`\`\`\n${result}\n\`\`\``).text);
-             blocks.push(...resultSections);
+            const pretty = `\`\`\`\n${result}\n\`\`\``;
+            for (const chunk of splitTextIntoSections(pretty)) {
+                blocks.push(section(chunk));
+            }
         }
     }
 
@@ -533,4 +534,19 @@ export function aiResponseMessage(
         blocks,
         text: fallbackText, // Use short fallback text
     };
+}
+
+// ---------------------------------------------------------------------------
+// Utility: lightweight summary for function / tool calls
+// ---------------------------------------------------------------------------
+export function functionCallMessage(
+    name: string,
+    stage: 'start' | 'end',
+    summary?: string
+): { blocks: Block[]; text: string } {
+    const verb = stage === 'start' ? ' Roept' : ' Resultaat van';
+    const header = `${verb} functie \`${name}\``;
+    const blocks: Block[] = [section(header)];
+    if (summary) blocks.push(context([mrkdwn(summary)]));
+    return { blocks, text: header };
 }

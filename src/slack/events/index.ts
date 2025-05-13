@@ -234,12 +234,15 @@ async function processMessageAndGenerateResponse(
                     const toolCallsData = event.data;
                     if (Array.isArray(toolCallsData) && toolCallsData.length > 0) {
                         const toolName = toolCallsData[0]?.function?.name || toolCallsData[0]?.name || 'een tool';
-                        const thinkingText = `Oké, ik gebruik nu de tool \`${toolName}\`... ${logEmoji.mcp}`;
+                        const argPreview =
+                            toolCallsData[0]?.function?.arguments
+                                ? JSON.stringify(toolCallsData[0].function.arguments).slice(0, 80) + ''
+                                : '';
                         try {
                             const toolThinkingMsg = await client.chat.postMessage({
                                 channel: threadInfo.channelId,
                                 thread_ts: threadInfo.threadTs,
-                                ...blockKit.loadingMessage(thinkingText)
+                                ...blockKit.functionCallMessage(toolName, 'start', argPreview)
                             });
                             lastMessageTs = toolThinkingMsg.ts as string;
                             accumulatedContent = '';
