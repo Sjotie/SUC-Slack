@@ -264,7 +264,7 @@ async function processMessageAndGenerateResponse(
                         const toolThinkingMsg = await client.chat.postMessage({
                             channel: threadInfo.channelId,
                             thread_ts: threadInfo.threadTs,
-                            ...blockKit.functionCallMessage(toolName, 'start', argPreview),
+                            ...blockKit.functionCallMessage(toolName || 'tool', 'start', argPreview),
                         });
                         toolMessageTs = toolThinkingMsg.ts as string;   // remember it
                         lastMessageTs = toolThinkingMsg.ts as string;
