@@ -257,8 +257,14 @@ async function processMessageAndGenerateResponse(
                 case 'tool_result':
                     if (lastMessageTs) {
                         const toolResultData = event.data;
-                        const resultSummary = typeof toolResultData === 'string' ? toolResultData.substring(0, 100) + '...' : '[resultaat ontvangen]';
-                        const messageUpdate = blockKit.aiResponseMessage(`Tool \`${event.data?.tool_name || 'tool'}\` klaar. ${resultSummary}`);
+                        const resultSummary = typeof toolResultData === 'string'
+                            ? toolResultData.substring(0, 120) + ''
+                            : '[resultaat ontvangen]';
+                        const messageUpdate = blockKit.functionCallMessage(
+                            event.data?.tool_name || toolCallsData?.[0]?.function?.name || 'tool',
+                            'end',
+                            resultSummary
+                        );
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, messageUpdate.blocks as any[], messageUpdate.text);
                         logger.info(`${logEmoji.slack} Updated tool usage message ${lastMessageTs} with result.`);
                     }

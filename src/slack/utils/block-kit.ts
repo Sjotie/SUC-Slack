@@ -418,67 +418,43 @@ export function aiResponseMessage(
 
     // --- NEW BLOCK CREATION LOGIC ---
     const MAX_CHARS_PER_BLOCK = 250; // Limit lowered from 300 to 250
+
+    // -------- helper: split `text` into sections on sentence boundaries --------
+    function splitTextIntoSections(text: string, maxLen: number = MAX_CHARS_PER_BLOCK): string[] {
+        const sentences = text.split(/(?<=[\.!?])\s+/);          // crude sentence split
+        const sections: string[] = [];
+        let buf = '';
+
+        for (const s of sentences) {
+            if ((buf + ' ' + s).trim().length <= maxLen) {
+                buf = buf ? `${buf} ${s}` : s;
+            } else {
+                if (buf) sections.push(buf.trim());
+                if (s.length > maxLen) {
+                    // hard-split very long sentence
+                    let rest = s;
+                    while (rest.length > maxLen) {
+                        sections.push(rest.slice(0, maxLen));
+                        rest = rest.slice(maxLen);
+                    }
+                    buf = rest;
+                } else {
+                    buf = s;
+                }
+            }
+        }
+        if (buf) sections.push(buf.trim());
+        return sections;
+    }
+
     const finalContentBlocks: Block[] = [];
-    const lines = safeContent.split('\n');
-    let currentSectionText = '';
-
-    for (const line of lines) {
-        const trimmedLine = line.trim();
-
-        // Check for divider line '---'
-        if (trimmedLine === '---') {
-            // If there's text accumulated, push it as a section first
-            if (currentSectionText.length > 0) {
-                finalContentBlocks.push(section(currentSectionText));
-                currentSectionText = ''; // Reset buffer
-            }
-            // Add the divider
+    for (const chunk of splitTextIntoSections(safeContent)) {
+        if (chunk.trim() === '---') {
             finalContentBlocks.push(divider());
-            continue; // Go to next line
-        }
-
-        // Check if adding the current line (plus a potential newline char) exceeds the limit
-        const potentialLength = currentSectionText.length + (currentSectionText.length > 0 ? 1 : 0) + line.length;
-
-        if (potentialLength <= MAX_CHARS_PER_BLOCK) {
-            // Line fits, add it to the current buffer
-            if (currentSectionText.length > 0) {
-                currentSectionText += '\n';
-            }
-            currentSectionText += line;
         } else {
-            // Line does not fit, push the current buffer as a section (if not empty)
-            if (currentSectionText.length > 0) {
-                finalContentBlocks.push(section(currentSectionText));
-            }
-            // Start a new buffer with the current line.
-            // Handle the edge case where the line *itself* is too long.
-            let remainingLine = line;
-            while (remainingLine.length > MAX_CHARS_PER_BLOCK) {
-                 let splitPoint = remainingLine.lastIndexOf(' ', MAX_CHARS_PER_BLOCK);
-                 // If no space found or space is at the beginning, force split
-                 if (splitPoint <= 0) splitPoint = MAX_CHARS_PER_BLOCK;
-                 finalContentBlocks.push(section(remainingLine.substring(0, splitPoint)));
-                 remainingLine = remainingLine.substring(splitPoint).trimStart();
-            }
-             currentSectionText = remainingLine; // The remainder becomes the start of the new section
+            finalContentBlocks.push(section(chunk));
         }
     }
-
-    // Add any remaining text in the buffer as the last section
-    if (currentSectionText.length > 0) {
-        finalContentBlocks.push(section(currentSectionText));
-    }
-
-     // Ensure we always have at least one block if there was original content
-     if (safeContent !== '(no content)' && finalContentBlocks.length === 0) {
-          // This can happen if the content was just "---"
-          // Let's just add the fallback text in this case
-          finalContentBlocks.push(section(safeContent.substring(0, MAX_CHARS_PER_BLOCK)));
-     } else if (finalContentBlocks.length === 0 && safeContent === '(no content)') {
-          // Handle truly empty input
-          finalContentBlocks.push(section(safeContent));
-     }
     // --- END NEW BLOCK CREATION LOGIC ---
 
 
