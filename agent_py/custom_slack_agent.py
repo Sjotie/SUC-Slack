@@ -56,6 +56,11 @@ class FilteredMCPServerSse(MCPServerSse):
 
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
+        print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
+        for tool in tools:
+            name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+            print(f"  - {name}: {desc}")
         if self._allowed_tools is not None:
             # tools can be dicts or objects with .name
             filtered = []
@@ -63,6 +68,11 @@ class FilteredMCPServerSse(MCPServerSse):
                 name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
                 if name in self._allowed_tools:
                     filtered.append(tool)
+            print(f"DEBUG: Tools available AFTER filter ({self.name}):")
+            for tool in filtered:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+                print(f"  - {name}: {desc}")
             return filtered
         return tools
 
