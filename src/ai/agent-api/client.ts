@@ -30,6 +30,9 @@ export class PythonAgentClient implements AIProvider {
         let responseStream: Readable | null = null;
         try {
             logger.debug(`${logEmoji.ai} Requesting streaming response from Python agent: ${env.PY_AGENT_URL}/generate`);
+            if (extra && extra.slackUserId) {
+                logger.info(`${logEmoji.slack} Passing Slack user ID to Python agent: ${extra.slackUserId}`);
+            }
             const axiosResponse: AxiosResponse<Readable> = await axios.post(
                 `${env.PY_AGENT_URL}/generate`,
                 {
