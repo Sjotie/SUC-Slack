@@ -64,8 +64,8 @@ hubspot_mcp_server = MCPServerStdio(
         ),
         "env": {
             "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
-            # npx under some shells insists that this exists
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME", "/tmp"),
+            # Always set XDG_CONFIG_HOME to avoid "unbound variable" errors in npx shell scripts
+            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
         }
         # Optionally, add 'cwd' here if needed.
     },
