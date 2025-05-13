@@ -81,7 +81,7 @@ eu2_make_mcp_server = FilteredMCPServerSse(
     params={"url": eu2_make_server_url},
     client_session_timeout_seconds=60.0,
     cache_tools_list=True,
-    allowed_tools=["scenario_5005685_list_transcripts_from_fire_flies"]
+    allowed_tools=["scenario_5209853_get_meeting_transcripts_from_fireflies"]
 )
 
 # --- HubSpot MCP Server definition ---
