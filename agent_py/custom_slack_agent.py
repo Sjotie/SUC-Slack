@@ -46,30 +46,31 @@ primary_railway_mcp_server = MCPServerSse(
 )
 
 # --- HubSpot MCP Server definition ---
-# hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
-# if not hubspot_mcp_token:
-#     print("WARNING: HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is not set. HubSpot MCP may not start correctly.")
-
-hubspot_mcp_server = MCPServerStdio(
-    name="hubspot",
-    params={
-        # Use the right shell command per OS
-        "command": "cmd" if os.name == "nt" else "npx",
-        "args": (
-            ["/c", "npx", "-y", "@hubspot/mcp-server"]
-            if os.name == "nt"
-            else ["-y", "@hubspot/mcp-server"]
-        ),
-        "env": {
-            "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
-            # npx under some shells insists that this exists
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME", "/tmp"),
-        }
-        # Optionally, add 'cwd' here if needed.
-    },
-    client_session_timeout_seconds=120.0,   # hubspot server needs a bit more time to start
-    # cache_tools_list=True
-)
+hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
+if not hubspot_mcp_token:
+    print("INFO: HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is not set. HubSpot MCP server will be disabled.")
+    hubspot_mcp_server = None
+else:
+    hubspot_mcp_server = MCPServerStdio(
+        name="hubspot",
+        params={
+            # Use the right shell command per OS
+            "command": "cmd" if os.name == "nt" else "npx",
+            "args": (
+                ["/c", "npx", "-y", "@hubspot/mcp-server"]
+                if os.name == "nt"
+                else ["-y", "@hubspot/mcp-server"]
+            ),
+            "env": {
+                "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
+                # npx under some shells insists that this exists
+                "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME", "/tmp"),
+            }
+            # Optionally, add 'cwd' here if needed.
+        },
+        client_session_timeout_seconds=120.0,   # hubspot server needs a bit more time to start
+        # cache_tools_list=True
+    )
 
 # --- Slack MCP Server definition ---
 slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
@@ -99,11 +100,16 @@ from datetime import datetime
 with open(os.path.join(os.path.dirname(__file__), "system_prompt.md"), "r", encoding="utf-8") as f:
     system_prompt = f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n" + f.read()
 
+# Build the list of MCP servers, skipping any that are None (e.g., if hubspot_mcp_server is disabled)
+mcp_servers = [primary_railway_mcp_server, slack_mcp_server]
+if hubspot_mcp_server is not None:
+    mcp_servers.append(hubspot_mcp_server)
+
 _agent = Agent(
     name="SlackAssistant",
     model=os.getenv("AGENT_MODEL", "gpt-4o"),
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, hubspot_mcp_server, slack_mcp_server],  # Added slack_mcp_server
+    mcp_servers=mcp_servers,
 )
 
 # For easier access in server.py, you can create a list of active servers
