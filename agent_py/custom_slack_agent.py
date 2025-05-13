@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables first
 
+from typing import Any
+
 import openai
 # Allow OPENAI_BASE_URL from .env to override the default.
 # The OpenAI library reads env vars automatically, but setting it
@@ -70,6 +72,37 @@ hubspot_mcp_server = MCPServerStdio(
     client_session_timeout_seconds=120.0,   # hubspot server needs a bit more time to start
     # cache_tools_list=True
 )
+
+# ------------------------------------------------------------------
+# Monkey-patch: some HubSpot tools declare an array but forget to
+# provide an `items` schema. That violates Gemini’s validator.
+# We walk every “parameters” tree and drop in a permissive
+# `{"type": "string"}` when it’s missing.
+# ------------------------------------------------------------------
+
+def _ensure_items(node: Any) -> None:
+    """Recursively ensure each array schema has an `items` key."""
+    if isinstance(node, dict):
+        if node.get("type") == "array" and "items" not in node:
+            node["items"] = {"type": "string"}        # minimal, safe default
+        for value in node.values():
+            _ensure_items(value)
+    elif isinstance(node, list):
+        for item in node:
+            _ensure_items(item)
+
+if hubspot_mcp_server is not None:
+    _orig_list_tools = hubspot_mcp_server.list_tools
+
+    async def _patched_list_tools(*args, **kwargs):
+        tools = await _orig_list_tools(*args, **kwargs)
+        for tool in tools:
+            params = tool.get("parameters")
+            if params:
+                _ensure_items(params)
+        return tools
+
+    hubspot_mcp_server.list_tools = _patched_list_tools
 
 # --- Slack MCP Server definition ---
 slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
