@@ -114,6 +114,24 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                         else:
                             call_args_str = "<none>"
                         print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
+
+                        # ----------  emit structured event to Slack ----------
+                        try:
+                            yield (
+                                json.dumps(
+                                    {
+                                        "type": "tool_call",
+                                        "data": {
+                                            "tool_name": call_name,
+                                            "arguments": call_args,
+                                        },
+                                    }
+                                )
+                                + "\n"
+                            )
+                            await asyncio.sleep(0.01)
+                        except Exception as ser_err:
+                            print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_call: {ser_err}")
                     # Tool/function result
                     elif event.type in ("tool_result", "function_result"):
                         result = getattr(event, "result", None) or getattr(event, "data", None)
@@ -124,6 +142,24 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                         if len(result_str) > 300:
                             result_str = result_str[:300] + "...[truncated]"
                         print(f"PY_AGENT_MCP (tool_result): Tool/function result: {result_str}")
+
+                        # ----------  emit structured result event ------------
+                        try:
+                            yield (
+                                json.dumps(
+                                    {
+                                        "type": "tool_result",
+                                        "data": {
+                                            "tool_name": getattr(event, 'tool_name', None),
+                                            "result": result,
+                                        },
+                                    }
+                                )
+                                + "\n"
+                            )
+                            await asyncio.sleep(0.01)
+                        except Exception as ser_err:
+                            print(f"PY_AGENT_ERROR (stream_agent_events): Failed to serialize tool_result: {ser_err}")
                     # Tool/function error
                     elif event.type in ("tool_error", "function_error"):
                         error_info = getattr(event, "error", None) or getattr(event, "data", None)

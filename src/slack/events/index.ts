@@ -107,6 +107,7 @@ async function processMessageAndGenerateResponse(
     let thinkingMessageTs: string | undefined;
     let lastMessageTs: string | undefined;
     let accumulatedContent = '';
+    let currentToolName: string | undefined;
     let chunkBuffer = '';
     const MIN_FLUSH_LEN = 120;                // wait until ~1-2 short sentences
     const SENTENCE_END_RE = /[.!?]\s/;        // crude sentence-boundary
@@ -232,46 +233,49 @@ async function processMessageAndGenerateResponse(
                     }
                     break;
 
-                case 'tool_calls':
+                case 'tool_call':
+                    currentToolName = event.data?.tool_name || event.data?.name;
+                    const argPreview =
+                        event.data?.arguments
+                            ? JSON.stringify(event.data.arguments).slice(0, 80) + ''
+                            : '';
                     if (lastMessageTs) {
                         const finalChunkUpdate = blockKit.aiResponseMessage(accumulatedContent);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, finalChunkUpdate.blocks as any[], finalChunkUpdate.text);
                     }
-                    const toolCallsData = event.data;
-                    if (Array.isArray(toolCallsData) && toolCallsData.length > 0) {
-                        const toolName = toolCallsData[0]?.function?.name || toolCallsData[0]?.name || 'een tool';
-                        const argPreview =
-                            toolCallsData[0]?.function?.arguments
-                                ? JSON.stringify(toolCallsData[0].function.arguments).slice(0, 80) + ''
-                                : '';
-                        try {
-                            const toolThinkingMsg = await client.chat.postMessage({
-                                channel: threadInfo.channelId,
-                                thread_ts: threadInfo.threadTs,
-                                ...blockKit.functionCallMessage(toolName, 'start', argPreview)
-                            });
-                            lastMessageTs = toolThinkingMsg.ts as string;
-                            accumulatedContent = '';
-                            logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${toolName}`);
-                        } catch (postError) {
-                            logger.error(`${logEmoji.error} Failed to post tool usage message`, { postError });
-                            lastMessageTs = lastMessageTs || thinkingMessageTs;
-                        }
+                    try {
+                        const toolThinkingMsg = await client.chat.postMessage({
+                            channel: threadInfo.channelId,
+                            thread_ts: threadInfo.threadTs,
+                            ...blockKit.functionCallMessage(currentToolName || 'tool', 'start', argPreview),
+                        });
+                        lastMessageTs = toolThinkingMsg.ts as string;
+                        accumulatedContent = '';
+                        logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${currentToolName}`);
+                    } catch (postError) {
+                        logger.error(`${logEmoji.error} Failed to post tool usage message`, { postError });
+                        lastMessageTs = lastMessageTs || thinkingMessageTs;
                     }
                     break;
 
                 case 'tool_result':
                     if (lastMessageTs) {
-                        const toolResultData = event.data;
+                        const toolResultData = event.data?.result ?? event.data;
                         const resultSummary = typeof toolResultData === 'string'
                             ? toolResultData.substring(0, 120) + ''
                             : '[resultaat ontvangen]';
                         const messageUpdate = blockKit.functionCallMessage(
-                            event.data?.tool_name || toolCallsData?.[0]?.function?.name || 'tool',
+                            currentToolName || event.data?.tool_name || 'tool',
                             'end',
                             resultSummary
                         );
-                        await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, messageUpdate.blocks as any[], messageUpdate.text);
+                        await conversationUtils.updateMessage(
+                            app,
+                            threadInfo.channelId,
+                            lastMessageTs,
+                            messageUpdate.blocks as any[],
+                            messageUpdate.text
+                        );
                         logger.info(`${logEmoji.slack} Updated tool usage message ${lastMessageTs} with result.`);
                     }
                     break;
