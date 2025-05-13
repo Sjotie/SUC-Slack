@@ -353,7 +353,17 @@ async function processMessageAndGenerateResponse(
             }
         }
 
-        // 5. Final update after the stream
+        // 5. Process any remaining chunkBuffer content after the stream has ended
+        // This ensures that even if the stream ends without a final_message event
+        // or if the last chunk didn't trigger a flush, its content is included.
+        if (chunkBuffer) {
+            accumulatedContent += chunkBuffer;
+            chunkBuffer = ''; // Clear it as its content is now processed
+            logger.debug(`${logEmoji.ai} Processed remaining chunkBuffer. Accumulated content length: ${accumulatedContent.length}`);
+        }
+
+        // 6. Final update or post after the stream (voorheen stap 5)
+        logger.debug(`${logEmoji.ai} Preparing final message. Accumulated content preview: "${accumulatedContent.substring(0,50)}..."`);
         const finalMsg = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
 
         if (lastMessageTs) {
