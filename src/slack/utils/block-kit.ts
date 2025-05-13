@@ -399,6 +399,21 @@ export function loadingMessage(message: string = 'Processing your request...'): 
 }
 
 /**
+ * Streaming preview (single growing section, _no_ hard chunk-splits).
+ * Use this while the SSE stream is still coming in; switch to
+ * `aiResponseMessage` once the final chunk is received.
+ */
+export function streamingPreviewMessage(
+    content: string
+): { blocks: Block[]; text: string } {
+    const safe = content.length ? content : '';
+    return {
+        blocks: [ section(safe) ],
+        text: safe.slice(0, 150),
+    };
+}
+
+/**
  * Create an AI response message
  * 
  * @param content The AI response content
