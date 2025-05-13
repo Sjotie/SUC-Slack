@@ -157,9 +157,14 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                             if tool_item is not None:
                                 # Try to extract from raw_item if present
                                 raw_item = getattr(tool_item, "raw_item", None)
-                                if raw_item and isinstance(raw_item, dict):
-                                    call_name = raw_item.get("name") or raw_item.get("tool_name")
-                                    call_args = raw_item.get("arguments") or raw_item.get("args")
+                                if raw_item:
+                                    # Try dict first, else fallback to object attributes
+                                    if isinstance(raw_item, dict):
+                                        call_name = raw_item.get("name") or raw_item.get("tool_name")
+                                        call_args = raw_item.get("arguments") or raw_item.get("args")
+                                    else:
+                                        call_name = getattr(raw_item, "name", None) or getattr(raw_item, "tool_name", None)
+                                        call_args = getattr(raw_item, "arguments", None) or getattr(raw_item, "args", None)
                                     # If arguments is a JSON string, parse it
                                     if isinstance(call_args, str):
                                         try:
@@ -169,7 +174,6 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                                 else:
                                     call_name = getattr(tool_item, "name", None)
                                     call_args = getattr(tool_item, "arguments", None) or getattr(tool_item, "args", None)
-                                    # If arguments is a JSON string, parse it
                                     if isinstance(call_args, str):
                                         try:
                                             call_args = json.loads(call_args)
