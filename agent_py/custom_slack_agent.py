@@ -212,8 +212,31 @@ slack_mcp_server = MCPServerStdio(
 
 from datetime import datetime
 
+# Format: Dinsdag 13 mei 2025
+import locale
+try:
+    locale.setlocale(locale.LC_TIME, "nl_NL.UTF-8")
+except Exception:
+    # fallback for systems without Dutch locale
+    pass
+
+now = datetime.now()
+# Map weekday number to Dutch day name
+dagen = [
+    "Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"
+]
+maanden = [
+    "januari", "februari", "maart", "april", "mei", "juni",
+    "juli", "augustus", "september", "oktober", "november", "december"
+]
+dag_vd_week = dagen[now.weekday()]
+dag = now.day
+maand = maanden[now.month - 1]
+jaar = now.year
+datum_str = f"{dag_vd_week} {dag} {maand} {jaar}"
+
 with open(os.path.join(os.path.dirname(__file__), "system_prompt.md"), "r", encoding="utf-8") as f:
-    system_prompt = f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n" + f.read()
+    system_prompt = f.read().rstrip() + f"\n\nDatum: {datum_str}"
 
 _agent = Agent(
     name="SlackAssistant",
