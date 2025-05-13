@@ -440,7 +440,43 @@ export function aiResponseMessage(
         : '(no content)';
 
     // --- NEW BLOCK CREATION LOGIC ---
-    const MAX_CHARS_PER_BLOCK = 250; // Limit lowered from 300 to 250
+    // Slack staat ~3 000 tekens per section-block toe; gebruik een veilige marge.
+    const MAX_CHARS_PER_BLOCK = 2900;
+
+    /**
+     * Zorg dat we nooit middenin een Markdown-link ( <https://> )
+     * of een code-blok (```  ```) afbreken  dat veroorzaakt het
+     * verdwijnen van links of tekst in Slack.
+     *
+     * @param text  De string die we willen afkappen
+     * @returns  Index waar we veilig kunnen splitsen ( MAX_CHARS_PER_BLOCK)
+     */
+    function findSafeSplitPoint(text: string): number {
+        // Eerste voorkeur: laatste spatie vóór het limiet
+        let splitPoint = text.lastIndexOf(' ', MAX_CHARS_PER_BLOCK);
+        if (splitPoint <= 0) splitPoint = MAX_CHARS_PER_BLOCK;
+
+        // 1) Breek niet binnen een <link>
+        const head = text.slice(0, splitPoint);
+        const open  = head.lastIndexOf('<');
+        const close = head.lastIndexOf('>');
+        if (open > close) {
+            // We zitten ín een link; verplaats split naar vóór de '<'
+            splitPoint = head.lastIndexOf(' ', open) > 0
+                ? head.lastIndexOf(' ', open)
+                : open;
+        }
+
+        // 2) Breek niet middenin een drietal back-ticks
+        const backticks = head.match(/```/g)?.length ?? 0;
+        if (backticks % 2 === 1) {
+            // Oneven aantal  we zitten in een code-blok
+            const newPt = head.lastIndexOf('```');
+            splitPoint = newPt > 0 ? newPt : splitPoint;
+        }
+
+        return splitPoint;
+    }
 
     // -------- helper: split `text` into sections on sentence boundaries --------
     function splitTextIntoSections(text: string, maxLen: number = MAX_CHARS_PER_BLOCK): string[] {
@@ -457,8 +493,9 @@ export function aiResponseMessage(
                     // hard-split very long sentence
                     let rest = s;
                     while (rest.length > maxLen) {
-                        sections.push(rest.slice(0, maxLen));
-                        rest = rest.slice(maxLen);
+                        const splitPoint = findSafeSplitPoint(rest);
+                        sections.push(rest.slice(0, splitPoint));
+                        rest = rest.slice(splitPoint).trimStart();
                     }
                     buf = rest;
                 } else {
@@ -492,8 +529,7 @@ export function aiResponseMessage(
                 blocks.push(section(remaining));
                 break;
             }
-            let splitPoint = remaining.lastIndexOf(' ', MAX_CHARS_PER_BLOCK);
-            if (splitPoint <= 0) splitPoint = MAX_CHARS_PER_BLOCK;
+            const splitPoint = findSafeSplitPoint(remaining);
             blocks.push(section(remaining.substring(0, splitPoint)));
             remaining = remaining.substring(splitPoint).trimStart();
         }
