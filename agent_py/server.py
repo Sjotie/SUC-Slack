@@ -8,10 +8,10 @@ import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
 
 # ------------------------------------------------------------------
-# Bump the SDKs default max-turns limit (10  configurable)
-# Docs: `Runner.run_streamed(..., max_turns=<int>)` :contentReference[oaicite:0]{index=0}
+# Verhoog de standaard-limiet van 10 beurten in de Agents-SDK.
+# Stuur zelf `AGENT_MAX_TURNS` in je .env om dit dynamisch te zetten.
 # ------------------------------------------------------------------
-MAX_AGENT_TURNS = int(os.getenv("AGENT_MAX_TURNS", "32"))  # fallback to 32
+MAX_AGENT_TURNS = int(os.getenv("AGENT_MAX_TURNS", "32"))
 
 # The Agents SDK usually installs an *agents* top-level package.
 # If it isnt importable (e.g. the wheel exposes `openai_agents`
@@ -80,7 +80,7 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
             run_result = Runner.run_streamed(
                 agent,
                 messages,
-                max_turns=MAX_AGENT_TURNS   # raise cap; example usage in GitHub issues :contentReference[oaicite:1]{index=1}
+                max_turns=MAX_AGENT_TURNS
             )
             print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
             async for event in run_result.stream_events():
@@ -117,16 +117,21 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                         print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
                         print(f"===================================")
 
-                        # ----------  emit structured event to Slack ----------
+                        # ----------  emit structured event naar Slack ----------
                         try:
                             yield (
                                 json.dumps(
                                     {
-                                        "type": "tool_call",
-                                        "data": {
-                                            "tool_name": call_name,
-                                            "arguments": call_args,
-                                        },
+                                        "type": "tool_calls",           # <- plural zodat Slack-handler het herkent
+                                        "data": [
+                                            {
+                                                "function": {
+                                                    "name": call_name,
+                                                    "arguments": call_args,
+                                                },
+                                                "name": call_name          # back-compat
+                                            }
+                                        ],
                                     }
                                 )
                                 + "\n"
