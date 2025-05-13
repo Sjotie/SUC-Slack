@@ -440,8 +440,8 @@ export function aiResponseMessage(
         : '(no content)';
 
     // --- NEW BLOCK CREATION LOGIC ---
-    // Slack staat ~3 000 tekens per section-block toe; gebruik een veilige marge.
-    const MAX_CHARS_PER_BLOCK = 2900;
+    // Slack block size set to 250 characters for chunking.
+    const MAX_CHARS_PER_BLOCK = 250;
 
     /**
      * Zorg dat we nooit middenin een Markdown-link ( <https://> )
