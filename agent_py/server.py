@@ -113,7 +113,9 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                                 call_args_str = call_args_str[:300] + "...[truncated]"
                         else:
                             call_args_str = "<none>"
+                        print(f"========== MCP/TOOL CALL ==========")
                         print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
+                        print(f"===================================")
 
                         # ----------  emit structured event to Slack ----------
                         try:
@@ -141,7 +143,9 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                             result_str = str(result)
                         if len(result_str) > 300:
                             result_str = result_str[:300] + "...[truncated]"
+                        print(f"========== MCP/TOOL RESULT ==========")
                         print(f"PY_AGENT_MCP (tool_result): Tool/function result: {result_str}")
+                        print(f"=====================================")
 
                         # ----------  emit structured result event ------------
                         try:
