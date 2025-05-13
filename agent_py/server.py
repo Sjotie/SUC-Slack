@@ -2,9 +2,16 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import json
+import os
 import asyncio
-import traceback # Import traceback
-import anyio  # For ClosedResourceError handling
+import traceback  # Import traceback
+import anyio      # For ClosedResourceError handling
+
+# ------------------------------------------------------------------
+# Bump the SDKs default max-turns limit (10  configurable)
+# Docs: `Runner.run_streamed(..., max_turns=<int>)` :contentReference[oaicite:0]{index=0}
+# ------------------------------------------------------------------
+MAX_AGENT_TURNS = int(os.getenv("AGENT_MAX_TURNS", "32"))  # fallback to 32
 
 # The Agents SDK usually installs an *agents* top-level package.
 # If it isnt importable (e.g. the wheel exposes `openai_agents`
@@ -70,7 +77,11 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
         # For very detailed debugging of all messages (can be verbose):
         # print(f"PY_AGENT_DEBUG (stream_agent_events): Full messages list: {messages}")
         try:
-            run_result = Runner.run_streamed(agent, messages)
+            run_result = Runner.run_streamed(
+                agent,
+                messages,
+                max_turns=MAX_AGENT_TURNS   # raise cap; example usage in GitHub issues :contentReference[oaicite:1]{index=1}
+            )
             print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
             async for event in run_result.stream_events():
                 # Let's log the raw event type before your processing
