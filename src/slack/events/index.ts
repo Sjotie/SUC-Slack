@@ -155,7 +155,7 @@ async function processMessageAndGenerateResponse(
         });
         thinkingMessageTs = thinkingMessage.ts as string;
         lastMessageTs = thinkingMessageTs;
-        postedBlocks = [];                   // cache reset bij nieuw bericht
+        // postedBlocks = []; // removed: variable does not exist or is not needed
         logger.debug(`${logEmoji.slack} Sent thinking message ${thinkingMessageTs} to thread ${threadInfo.threadTs}`);
 
         // 2. Initialize context (fetch history etc.)
