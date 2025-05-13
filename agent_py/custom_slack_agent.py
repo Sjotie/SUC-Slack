@@ -3,6 +3,12 @@ from dotenv import load_dotenv
 load_dotenv()  # Load environment variables first
 
 from typing import Any
+import contextvars
+
+# Single ContextVar instance shared by server & MCP filtering
+slack_user_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "slack_user_id", default=None
+)
 
 import openai
 # Allow OPENAI_BASE_URL from .env to override the default.
@@ -60,13 +66,8 @@ class FilteredMCPServerSse(MCPServerSse):
         }
 
     async def list_tools(self, *args, **kwargs):
-        # Try to get the Slack user ID from the current request context if available
-        import contextvars
-        slack_user_id = None
-        try:
-            slack_user_id = contextvars.ContextVar("slack_user_id").get()
-        except Exception:
-            pass
+        # Get Slack user-id that server.py stored in the shared ContextVar
+        slack_user_id = slack_user_id_var.get()
 
         tools = await super().list_tools(*args, **kwargs)
         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
@@ -84,11 +85,17 @@ class FilteredMCPServerSse(MCPServerSse):
             seen = set()
             for tool in tools:
                 name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-                # Match tools that end with _<username> (case-insensitive, with or without trailing underscore)
-                if name and (
-                    name.lower().endswith(f"_{user_tool_suffix.lower()}")
-                    or name.lower().endswith(f"_{user_tool_suffix.lower()}/")  # just in case
-                ) and name not in seen:
+                desc = tool.get("description") if isinstance(tool, dict) else getattr(tool, "description", "")
+
+                match_for_user = False
+                # 1) tool **name** ends with "_<username>"
+                if name and name.lower().endswith(f"_{user_tool_suffix.lower()}"):
+                    match_for_user = True
+                # 2) tool **description** contains "| <Username>" (Makes default suffix)
+                elif desc and f"| {user_tool_suffix}".lower() in desc.lower():
+                    match_for_user = True
+
+                if match_for_user and name not in seen:
                     filtered.append(tool)
                     seen.add(name)
             print(f"DEBUG: Tools available AFTER filter ({self.name}):")

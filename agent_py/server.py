@@ -6,7 +6,7 @@ import os
 import asyncio
 import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
-import contextvars
+from custom_slack_agent import slack_user_id_var   # shared ContextVar
 
 # ------------------------------------------------------------------
 # Verhoog de standaard-limiet van 10 beurten in de Agents-SDK.
@@ -397,8 +397,7 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
 
 @app.post("/generate")
 async def generate_stream(req: ChatRequest, request: Request):
-    # Set the slack_user_id in a context variable for downstream use in tool filtering
-    slack_user_id_var = contextvars.ContextVar("slack_user_id")
+    # Store Slack user-id for downstream Make-tool filtering
     if req.slackUserId:
         slack_user_id_var.set(req.slackUserId)
     print(f"PY_AGENT_DEBUG (/generate): Received request. Prompt type: {type(req.prompt)}")
