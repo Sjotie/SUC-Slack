@@ -1,0 +1,11 @@
+# nixpacks.toml
+# Tell Railway’s Nixpacks builder to install both Node + Python runtimes
+providers = ["...", "node"]
+
+# (optional) pin the Node major version the HubSpot MCP needs
+[variables]
+NIXPACKS_NODE_VERSION = "20"
+
+# (optional but recommended) make sure the container still starts your Python API
+[start]
+cmd = "python -m uvicorn agent_py.server:app --host 0.0.0.0 --port $PORT"

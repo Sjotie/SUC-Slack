@@ -18,8 +18,10 @@ MAX_AGENT_TURNS = int(os.getenv("AGENT_MAX_TURNS", "32"))
 # instead), fall back gracefully:
 try:
     from agents import Runner          # normal path (openai-agents  0.0.7)
+    from agents.exceptions import ModelBehaviorError
 except ModuleNotFoundError:
     from openai_agents import Runner   # fallback for some installs
+    from openai_agents.exceptions import ModelBehaviorError
 from custom_slack_agent import _agent, ACTIVE_MCP_SERVERS
 
 from openai.types.responses import ResponseTextDeltaEvent
@@ -98,6 +100,7 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                 elif hasattr(event, 'event') and isinstance(event.event, str): # For some SDK versions
                      raw_event_type = event.event
 
+                print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
                 print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
 
                 # --- MCP/Tool use logging ---
@@ -297,6 +300,9 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                 if hasattr(event, 'type') and event.type == "raw_response_event":
                     print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring raw_response_event (not ResponseTextDeltaEvent). Data: {type(event.data)}")
                     continue
+                if hasattr(event, 'type') and event.type == "raw_response_event":
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring raw_response_event (not ResponseTextDeltaEvent). Data: {type(event.data)}")
+                    continue
 
                 if hasattr(event, 'type') and event.type in (
                     "agent_updated_stream_event",
@@ -451,7 +457,7 @@ async def generate_stream(req: ChatRequest):
     async def managed_stream_wrapper():
         print("PY_AGENT_DEBUG (managed_stream_wrapper): Starting.")
         try:
-            async for event_json_line in stream_agent_events(_agent, cleaned_messages):
+            async for event_json_line in stream_agent_events(_agent, cleaned_messages, max_retries=2):
                 yield event_json_line
         except Exception as wrap_err:
             print(f"PY_AGENT_ERROR (managed_stream_wrapper): Error: {wrap_err}")
