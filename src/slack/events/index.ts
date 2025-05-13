@@ -198,7 +198,12 @@ async function processMessageAndGenerateResponse(
             setTimeout(async () => {
                 try {
                     if (!lastMessageTs) return;
-                    const messageUpdate = blockKit.aiResponseMessage(accumulatedContent + ' ');
+                    // During streaming we avoid sentence/block splitting to
+                    // prevent awkward mid-word breaks caused by irregular SSE
+                    // chunk sizes.  A single growing section is fine here.
+                    const messageUpdate = blockKit.streamingPreviewMessage(
+                        accumulatedContent + ' '
+                    );
                     await conversationUtils.updateMessage(
                         app,
                         threadInfo.channelId,
