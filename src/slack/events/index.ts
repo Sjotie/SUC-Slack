@@ -196,7 +196,10 @@ async function processMessageAndGenerateResponse(
         // 3. Call the STREAMING function of the AI client
         const eventStream = aiClient.generateResponseStream(
             promptForAI,
-            conversationHistory
+            conversationHistory,
+            undefined,
+            undefined,
+            { slackUserId: threadInfo.userId }
         );
 
         // 4. Process the events from the stream
