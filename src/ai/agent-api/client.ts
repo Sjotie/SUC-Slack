@@ -24,7 +24,8 @@ export class PythonAgentClient implements AIProvider {
         prompt: string | MessageContent[],
         conversationHistory: ConversationMessage[],
         _unused?: unknown,
-        options?: GenerateOptions
+        options?: GenerateOptions,
+        extra?: { slackUserId?: string }
     ): AsyncIterable<AgentStreamEvent> {
         let responseStream: Readable | null = null;
         try {
@@ -33,7 +34,9 @@ export class PythonAgentClient implements AIProvider {
                 `${env.PY_AGENT_URL}/generate`,
                 {
                     prompt,
-                    history: conversationHistory
+                    history: conversationHistory,
+                    // Pass along the Slack user ID if provided
+                    ...(extra && extra.slackUserId ? { slackUserId: extra.slackUserId } : {})
                 },
                 {
                     responseType: 'stream',

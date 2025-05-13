@@ -54,6 +54,7 @@ async def startup_event():
 class ChatRequest(BaseModel):
     prompt: str | list
     history: list
+    slackUserId: str | None = None
 
 class ChatResponse(BaseModel):
     content: str
@@ -400,6 +401,10 @@ async def generate_stream(req: ChatRequest):
         # Log summary of history
         history_summary = [{"role": msg.get("role", "N/A"), "content_type": type(msg.get("content")).__name__} for msg in req.history]
         print(f"PY_AGENT_DEBUG (/generate): History (summarized): {history_summary}")
+
+    # Log the Slack user ID if present
+    if req.slackUserId:
+        print(f"PY_AGENT_DEBUG (/generate): Slack user ID received: {req.slackUserId}")
 
 
     cleaned_messages = []

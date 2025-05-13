@@ -105,6 +105,8 @@ async function processMessageAndGenerateResponse(
     messageTextOrContent: string | MessageContent[],
     client: any
 ): Promise<void> {
+    // Attach the Slack user ID to the threadInfo for downstream use
+    (threadInfo as any).__slackUserId = threadInfo.userId;
     let thinkingMessageTs: string | undefined;
     let lastMessageTs: string | undefined;
     // NEW  keep a separate handle on the tool-call message so we dont overwrite it later
