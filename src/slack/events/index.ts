@@ -107,6 +107,9 @@ async function processMessageAndGenerateResponse(
     let thinkingMessageTs: string | undefined;
     let lastMessageTs: string | undefined;
     let accumulatedContent = '';
+    let chunkBuffer = '';
+    const MIN_FLUSH_LEN = 120;                // wait until ~1-2 short sentences
+    const SENTENCE_END_RE = /[.!?]\s/;        // crude sentence-boundary
     let finalMetadata: Record<string, any> | undefined;
 
     try {
@@ -188,37 +191,20 @@ async function processMessageAndGenerateResponse(
         );
 
         // 4. Process the events from the stream
-        let updateScheduled = false;
-        const UPDATE_INTERVAL_MS = 750;
-
-        const scheduleUpdate = async () => {
-            if (updateScheduled) return;
-            updateScheduled = true;
-
-            setTimeout(async () => {
-                try {
-                    if (!lastMessageTs) return;
-                    // During streaming we avoid sentence/block splitting to
-                    // prevent awkward mid-word breaks caused by irregular SSE
-                    // chunk sizes.  A single growing section is fine here.
-                    const messageUpdate = blockKit.streamingPreviewMessage(
-                        accumulatedContent + ' '   // trimmed inside util
-                    );
-                    await conversationUtils.updateMessage(
-                        app,
-                        threadInfo.channelId,
-                        lastMessageTs,
-                        messageUpdate.blocks as any[],
-                        messageUpdate.text + ' '
-                    );
-                    logger.debug(`${logEmoji.slack} Updated message ${lastMessageTs} with streamed content chunk.`);
-                } catch (error) {
-                    logger.error(`${logEmoji.error} Failed to update Slack message during stream`, { ts: lastMessageTs, error });
-                } finally {
-                    updateScheduled = false;
-                }
-            }, UPDATE_INTERVAL_MS);
-        };
+        async function flushBuffer() {
+            if (!lastMessageTs) return;
+            const messageUpdate = blockKit.aiResponseMessage(
+                accumulatedContent + chunkBuffer
+            );
+            await conversationUtils.updateMessage(
+                app,
+                threadInfo.channelId,
+                lastMessageTs,
+                messageUpdate.blocks as any[],
+                messageUpdate.text
+            );
+            logger.debug(`${logEmoji.slack} Flushed content to message ${lastMessageTs}`);
+        }
 
         for await (const event of eventStream) {
             logger.debug(`${logEmoji.ai} Received agent event: ${event.type}`);
