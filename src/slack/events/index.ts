@@ -254,11 +254,30 @@ async function processMessageAndGenerateResponse(
                 // Accept both 'tool_call' and 'tool_calls' for compatibility
                 case 'tool_call':
                 case 'tool_calls': {
-                    // Finalize (flush) any existing content for the message *before* the tool call.
+                    // STAP 1: Als we content aan het verzamelen waren voor een NIEUW bericht (omdat lastMessageTs undefined was
+                    // na een vorig tool_result), post dat nieuwe bericht dan EERST.
+                    if (!lastMessageTs && (accumulatedContent || chunkBuffer)) {
+                        const intermediateContent = accumulatedContent + chunkBuffer;
+                        if (intermediateContent.trim()) {
+                            logger.info(`${logEmoji.slack} Posting intermediate AI content collected *before* this tool call as a new message.`);
+                            const intermediateMsgBody = blockKit.aiResponseMessage(intermediateContent.trim());
+                            const postRes = await client.chat.postMessage({
+                                channel: threadInfo.channelId,
+                                thread_ts: threadInfo.threadTs,
+                                ...intermediateMsgBody,
+                            });
+                            lastMessageTs = postRes.ts as string; // Dit nieuwe bericht is nu het 'laatste' bericht.
+                            conversationUtils.addAssistantMessageToThread(threadInfo, intermediateContent.trim());
+                        }
+                    }
+
+                    // STAP 2: Als er nog een lastMessageTs is (van vóór de eventuele intermediate post, of het originele thinking message),
+                    // en er is content voor, flush die dan.
                     if (lastMessageTs && (accumulatedContent || chunkBuffer)) {
                         await processBufferAndFlushMessage();
                     }
-                    // Reset accumulatedContent and chunkBuffer because the content *after* the tool call will form a new logical message.
+
+                    // STAP 3: Reset state voor content die eventueel NA deze tool_call komt.
                     accumulatedContent = ''; 
                     chunkBuffer = '';   
 
@@ -304,8 +323,12 @@ async function processMessageAndGenerateResponse(
                             ? toolResultData.substring(0, 120)
                             : '[resultaat ontvangen]';
 
-                        // Ensure any content meant for the tool message itself is flushed before updating with the result.
-                        if (accumulatedContent || chunkBuffer) await processBufferAndFlushMessage(); 
+                        // Content in accumulatedContent/chunkBuffer op dit punt zou voor het tool-bericht zelf moeten zijn
+                        // (zeer onwaarschijnlijk dat de tool zelf tekst streamt op deze manier).
+                        // Flush het voor de zekerheid als lastMessageTs overeenkomt met toolMessageTs.
+                        if (lastMessageTs === toolMessageTs && (accumulatedContent || chunkBuffer)) {
+                            await processBufferAndFlushMessage();
+                        }
 
                         const messageUpdate = blockKit.functionCallMessage(
                             currentToolName || event.data?.tool_name || 'tool',
@@ -321,10 +344,10 @@ async function processMessageAndGenerateResponse(
                         );
                         logger.info(`${logEmoji.slack} Updated tool usage message ${toolMessageTs} with result.`);
 
-                        // After the tool message is finalized with its result, 
-                        // subsequent llm_chunks should form a NEW message.
+                        // Na het finaliseren van het tool-resultaat bericht,
+                        // moet de volgende AI output een NIEUW bericht starten.
                         lastMessageTs = undefined; // Signal to post a new message for subsequent LLM output
-                        accumulatedContent = '';   // Reset for the new logical message.
+                        accumulatedContent = '';   // Reset voor het nieuwe logische bericht.
                         chunkBuffer = '';          // Reset for the new logical message.
                     }
                     break;
@@ -374,29 +397,34 @@ async function processMessageAndGenerateResponse(
         }
 
         // 6. Final update or post after the stream
-        logger.debug(`${logEmoji.ai} Preparing final message. Accumulated content preview: "${accumulatedContent.substring(0,50)}..."`);
-        const finalMsg = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
+        logger.debug(`${logEmoji.ai} Preparing final message. Accumulated content for final post/update: "${accumulatedContent.substring(0,50)}..."`);
+        
+        // Alleen posten/updaten als er daadwerkelijk content is.
+        if (accumulatedContent && accumulatedContent.trim().length > 0 && accumulatedContent.trim() !== '(no content)') {
+            const finalMsg = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
 
-        if (lastMessageTs) {
-            // we hebben nog een preview-bericht om bij te werken
-            await conversationUtils.updateMessage(
-                app,
-                threadInfo.channelId,
-                lastMessageTs,
-                finalMsg.blocks as any[],
-                finalMsg.text
-            );
-        } else {
-            // laatste zichtbare bericht was een tool-resultaat  plaats nu een nieuw AI-antwoord
-            const res = await client.chat.postMessage({
-                channel: threadInfo.channelId,
-                thread_ts: threadInfo.threadTs,
-                ...finalMsg,
-            });
-            lastMessageTs = res.ts as string;
+            if (lastMessageTs) { // We are updating an existing message
+                logger.info(`${logEmoji.slack} Updating existing message ${lastMessageTs} with final accumulated content.`);
+                await conversationUtils.updateMessage(
+                    app,
+                    threadInfo.channelId,
+                    lastMessageTs,
+                    finalMsg.blocks as any[],
+                    finalMsg.text
+                );
+            } else {
+                // laatste zichtbare bericht was een tool-resultaat  plaats nu een nieuw AI-antwoord
+                logger.info(`${logEmoji.slack} Posting new message with final accumulated content.`);
+                const res = await client.chat.postMessage({
+                    channel: threadInfo.channelId,
+                    thread_ts: threadInfo.threadTs,
+                    ...finalMsg,
+                });
+                lastMessageTs = res.ts as string;
+            }
+
+            conversationUtils.addAssistantMessageToThread(threadInfo, accumulatedContent);
         }
-
-        conversationUtils.addAssistantMessageToThread(threadInfo, accumulatedContent);
 
     } catch (error) {
         logger.error(`${logEmoji.error} Error processing message stream or initial setup`, {
