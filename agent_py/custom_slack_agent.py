@@ -155,9 +155,10 @@ ACTIVE_MCP_SERVERS = _agent.mcp_servers if _agent.mcp_servers else []
 import asyncio
 
 async def log_all_mcp_tools():
-    print("INFO: Listing all available tools from each MCP server...")
+    print("INFO: Listing all available tools from each MCP server (after connect)...")
     for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server]:
         try:
+            await mcp_server.connect()
             tools = await mcp_server.list_tools()
             print(f"TOOLS ({mcp_server.name}):")
             for tool in tools:
