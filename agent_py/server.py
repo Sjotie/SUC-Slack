@@ -70,6 +70,48 @@ async def stream_agent_events(agent, messages):
 
             print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
 
+            # --- MCP/Tool use logging ---
+            # Detect tool/function call events and log them
+            # Common event types: 'tool_call', 'tool_result', 'tool_error', 'function_call', 'function_result', etc.
+            # Also log errors and truncated payloads for debugging.
+            if hasattr(event, 'type'):
+                # Tool/function call initiated
+                if event.type in ("tool_call", "function_call"):
+                    # Try to extract function/tool name and arguments
+                    call_name = getattr(event, "name", None) or getattr(event, "tool_name", None)
+                    call_args = getattr(event, "arguments", None) or getattr(event, "args", None)
+                    # Truncate arguments for log
+                    if call_args is not None:
+                        try:
+                            call_args_str = json.dumps(call_args)
+                        except Exception:
+                            call_args_str = str(call_args)
+                        if len(call_args_str) > 300:
+                            call_args_str = call_args_str[:300] + "...[truncated]"
+                    else:
+                        call_args_str = "<none>"
+                    print(f"PY_AGENT_MCP (tool_call): Calling tool/function '{call_name}' with args: {call_args_str}")
+                # Tool/function result
+                elif event.type in ("tool_result", "function_result"):
+                    result = getattr(event, "result", None) or getattr(event, "data", None)
+                    try:
+                        result_str = json.dumps(result)
+                    except Exception:
+                        result_str = str(result)
+                    if len(result_str) > 300:
+                        result_str = result_str[:300] + "...[truncated]"
+                    print(f"PY_AGENT_MCP (tool_result): Tool/function result: {result_str}")
+                # Tool/function error
+                elif event.type in ("tool_error", "function_error"):
+                    error_info = getattr(event, "error", None) or getattr(event, "data", None)
+                    try:
+                        error_str = json.dumps(error_info)
+                    except Exception:
+                        error_str = str(error_info)
+                    if len(error_str) > 300:
+                        error_str = error_str[:300] + "...[truncated]"
+                    print(f"PY_AGENT_MCP (tool_error): Tool/function error: {error_str}")
+
             # --- Start of your existing event processing logic for 'raw_response_event' etc.
             if (
                 hasattr(event, 'type') and event.type == "raw_response_event"
