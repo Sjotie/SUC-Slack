@@ -226,8 +226,23 @@ async function processMessageAndGenerateResponse(
             switch (event.type) {
                 case 'llm_chunk':
                     if (typeof event.data === 'string' && event.data) {
-                        accumulatedContent += event.data;
-                        scheduleUpdate();
+                        chunkBuffer += event.data;
+
+                        // Flush when buffer long enough AND we have a sentence end
+                        if (
+                            chunkBuffer.length >= MIN_FLUSH_LEN &&
+                            SENTENCE_END_RE.test(chunkBuffer)
+                        ) {
+                            const lastPunct =
+                                Math.max(
+                                    chunkBuffer.lastIndexOf('. '),
+                                    chunkBuffer.lastIndexOf('? '),
+                                    chunkBuffer.lastIndexOf('! ')
+                                ) + 1; // include punctuation
+                            accumulatedContent += chunkBuffer.slice(0, lastPunct);
+                            chunkBuffer = chunkBuffer.slice(lastPunct);
+                            await flushBuffer();
+                        }
                     }
                     break;
 
@@ -277,8 +292,13 @@ async function processMessageAndGenerateResponse(
 
                 case 'final_message':
                     const finalData = event.data;
+                    // append any remaining buffered text then the final model content
+                    if (chunkBuffer) {
+                        accumulatedContent += chunkBuffer;
+                        chunkBuffer = '';
+                    }
                     if (finalData && typeof finalData.content === 'string') {
-                        accumulatedContent = finalData.content;
+                        accumulatedContent += finalData.content;
                     }
                     if (finalData && finalData.metadata) {
                         finalMetadata = finalData.metadata;
@@ -301,7 +321,6 @@ async function processMessageAndGenerateResponse(
         // 5. Final update after the stream
         if (lastMessageTs) {
             logger.info(`${logEmoji.slack} Stream finished. Updating final message ${lastMessageTs}.`);
-            await new Promise(resolve => setTimeout(resolve, UPDATE_INTERVAL_MS + 100));
             const finalMessage = blockKit.aiResponseMessage(accumulatedContent, finalMetadata);
             await conversationUtils.updateMessage(
                 app,
