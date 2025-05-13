@@ -84,6 +84,13 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
             )
             print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
             async for event in run_result.stream_events():
+                # --- VERY RAW LOGGING FOR DEBUGGING ---
+                print("PY_AGENT_RAW (stream_agent_events): event object repr:", repr(event))
+                print("PY_AGENT_RAW (stream_agent_events): event object dir:", dir(event))
+                try:
+                    print("PY_AGENT_RAW (stream_agent_events): event as dict:", event.__dict__)
+                except Exception:
+                    print("PY_AGENT_RAW (stream_agent_events): event has no __dict__")
                 # Let's log the raw event type before your processing
                 raw_event_type = 'unknown_raw'
                 if hasattr(event, 'type'):
