@@ -235,12 +235,27 @@ async function processMessageAndGenerateResponse(
                     }
                     break;
 
+                // Accept both 'tool_call' and 'tool_calls' for compatibility
                 case 'tool_call':
-                    currentToolName = event.data?.tool_name || event.data?.name;
-                    const argPreview =
-                        event.data?.arguments
-                            ? JSON.stringify(event.data.arguments).slice(0, 80) + ''
+                case 'tool_calls': {
+                    // tool_calls: { data: [ { function: { name, arguments }, ... } ] }
+                    // tool_call:  { data: { tool_name, arguments, ... } }
+                    let toolName: string | undefined;
+                    let argPreview: string = '';
+                    if (event.type === 'tool_calls' && Array.isArray(event.data)) {
+                        const firstCall = event.data[0]?.function;
+                        toolName = firstCall?.name || event.data[0]?.name || 'tool';
+                        argPreview = firstCall?.arguments
+                            ? JSON.stringify(firstCall.arguments).slice(0, 80)
                             : '';
+                    } else {
+                        toolName = event.data?.tool_name || event.data?.name || 'tool';
+                        argPreview = event.data?.arguments
+                            ? JSON.stringify(event.data.arguments).slice(0, 80)
+                            : '';
+                    }
+                    currentToolName = toolName;
+
                     if (lastMessageTs) {
                         const finalChunkUpdate = blockKit.aiResponseMessage(accumulatedContent);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, finalChunkUpdate.blocks as any[], finalChunkUpdate.text);
@@ -249,17 +264,18 @@ async function processMessageAndGenerateResponse(
                         const toolThinkingMsg = await client.chat.postMessage({
                             channel: threadInfo.channelId,
                             thread_ts: threadInfo.threadTs,
-                            ...blockKit.functionCallMessage(currentToolName || 'tool', 'start', argPreview),
+                            ...blockKit.functionCallMessage(toolName, 'start', argPreview),
                         });
                         toolMessageTs = toolThinkingMsg.ts as string;   // remember it
                         lastMessageTs = toolThinkingMsg.ts as string;
                         accumulatedContent = '';
-                        logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${currentToolName}`);
+                        logger.info(`${logEmoji.slack} Posted tool usage message ${lastMessageTs} for tool ${toolName}`);
                     } catch (postError) {
                         logger.error(`${logEmoji.error} Failed to post tool usage message`, { postError });
                         lastMessageTs = lastMessageTs || thinkingMessageTs;
                     }
                     break;
+                }
 
                 case 'tool_result':
                     if (toolMessageTs) {
