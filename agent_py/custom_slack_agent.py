@@ -49,11 +49,29 @@ primary_railway_mcp_server = MCPServerSse(
 
 # --- NEW: EU2 Make.com MCP server (SSE) ---
 eu2_make_server_url = "https://eu2.make.com/mcp/api/v1/u/6d0262c3-9c24-4f3d-a836-aab12ac5674a/sse"
-eu2_make_mcp_server = MCPServerSse(
+class FilteredMCPServerSse(MCPServerSse):
+    def __init__(self, *args, allowed_tools=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._allowed_tools = set(allowed_tools) if allowed_tools else None
+
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        if self._allowed_tools is not None:
+            # tools can be dicts or objects with .name
+            filtered = []
+            for tool in tools:
+                name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+                if name in self._allowed_tools:
+                    filtered.append(tool)
+            return filtered
+        return tools
+
+eu2_make_mcp_server = FilteredMCPServerSse(
     name="eu2_make",
     params={"url": eu2_make_server_url},
     client_session_timeout_seconds=60.0,
-    cache_tools_list=True
+    cache_tools_list=True,
+    allowed_tools=["scenario_5005685_list_transcripts_from_fire_flies"]
 )
 
 # --- HubSpot MCP Server definition ---
