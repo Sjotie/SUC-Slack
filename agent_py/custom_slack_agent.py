@@ -47,6 +47,15 @@ primary_railway_mcp_server = MCPServerSse(
     cache_tools_list=True
 )
 
+# --- NEW: EU2 Make.com MCP server (SSE) ---
+eu2_make_server_url = "https://eu2.make.com/mcp/api/v1/u/6d0262c3-9c24-4f3d-a836-aab12ac5674a/sse"
+eu2_make_mcp_server = MCPServerSse(
+    name="eu2_make",
+    params={"url": eu2_make_server_url},
+    client_session_timeout_seconds=60.0,
+    cache_tools_list=True
+)
+
 # --- HubSpot MCP Server definition ---
 # hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
 # if not hubspot_mcp_token:
@@ -136,8 +145,29 @@ _agent = Agent(
     name="SlackAssistant",
     model=os.getenv("AGENT_MODEL", "gpt-4o"),
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, slack_mcp_server],  # hubspot_mcp_server commented out
+    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],  # Added eu2_make_mcp_server
 )
 
 # For easier access in server.py, you can create a list of active servers
 ACTIVE_MCP_SERVERS = _agent.mcp_servers if _agent.mcp_servers else []
+
+# --- NEW: Log all available tools from each MCP server at startup ---
+import asyncio
+
+async def log_all_mcp_tools():
+    print("INFO: Listing all available tools from each MCP server...")
+    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server]:
+        try:
+            tools = await mcp_server.list_tools()
+            print(f"TOOLS ({mcp_server.name}):")
+            for tool in tools:
+                print(f"  - {tool.get('name', '<unnamed>')}: {tool.get('description', '')}")
+        except Exception as e:
+            print(f"ERROR: Could not list tools for MCP server '{mcp_server.name}': {e}")
+
+# Schedule the tool logging at startup (if running in an async context)
+try:
+    asyncio.get_event_loop().create_task(log_all_mcp_tools())
+except Exception:
+    # If not in an event loop, just print a warning
+    print("WARNING: Could not schedule MCP tool logging at startup (no event loop running).")
