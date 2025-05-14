@@ -10,20 +10,7 @@ slack_user_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "slack_user_id", default=None
 )
 
-import openai
-# Allow OPENAI_BASE_URL from .env to override the default.
-# The OpenAI library reads env vars automatically, but setting it
-# explicitly makes local/debug runs fool-proof.
-if os.getenv("OPENAI_BASE_URL"):
-    openai.base_url = os.environ["OPENAI_BASE_URL"]
-
-# ------------------------------------------------------------------
-# Geminis OpenAI-compatible endpoint supports *chat completions*,
-# not the newer *responses* API that the Agents SDK defaults to.
-# Tell the SDK to use chat-completions globally and turn off tracing
-# (otherwise it tries to upload traces with a real OpenAI key and
-# shows the 401 youre seeing).
-# ------------------------------------------------------------------
+# (LiteLLM integration: openai import and base_url override are not needed)
 from agents import set_default_openai_api
 from agents.tracing import set_tracing_disabled
 
@@ -261,23 +248,20 @@ def get_dutch_date():
 
 system_prompt = f"{base_system_prompt}\n\nDatum: {get_dutch_date()}"
 
-raw_agent_model = os.getenv("AGENT_MODEL", "gpt-4o")
-openai_base_url = os.getenv("OPENAI_BASE_URL", "")
-processed_agent_model = raw_agent_model
+# Get the AGENT_MODEL from environment variables.
+# This should now be prefixed with "litellm/", e.g., "litellm/together_ai/Qwen/Qwen3-235B-A22B-fp8-tput"
+agent_model_name_from_env = os.getenv("AGENT_MODEL", "gpt-4o") # Default to gpt-4o if not set
 
-# Check if using Together AI and the model name from AGENT_MODEL needs prefixing
-if "api.together.xyz" in openai_base_url and "/" in raw_agent_model and ":" not in raw_agent_model:
-    # If OPENAI_BASE_URL points to Together AI, and AGENT_MODEL looks like "Creator/ModelName"
-    # (e.g., "Qwen/Qwen3-235B-A22B-fp8-tput") and doesn't already have a prefix,
-    # prepend "openai:" to make it compatible with the OpenAI Agents SDK's prefix parsing.
-    print(f"INFO: Modifying AGENT_MODEL for Together AI. Original: '{raw_agent_model}', Processed: 'openai:{raw_agent_model}'")
-    processed_agent_model = f"openai:{raw_agent_model}"
+# Optional: Add a check or logging for the model name format
+if not agent_model_name_from_env.startswith("litellm/"):
+    print(f"PY_AGENT_WARNING: AGENT_MODEL '{agent_model_name_from_env}' does not start with 'litellm/'. "
+          f"Ensure it is correctly formatted for LiteLLM (e.g., 'litellm/provider/model').")
 
 _agent = Agent(
     name="SlackAssistant",
-    model=processed_agent_model,  # Use the potentially modified model name
+    model=agent_model_name_from_env, # Use the model name directly
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],  # Added eu2_make_mcp_server back
+    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],
 )
 
 # For easier access in server.py, you can create a list of active servers
