@@ -190,6 +190,7 @@ slack_mcp_server = MCPServerStdio(
         "env": {
             "SLACK_BOT_TOKEN": slack_bot_token or "",
             "SLACK_TEAM_ID": slack_team_id or "",
+            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or "/tmp",  # ← nieuw
         }
     },
     # You can adjust timeout or other params as needed
