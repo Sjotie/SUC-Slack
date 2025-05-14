@@ -8,6 +8,16 @@
 import { logger, logEmoji } from '../../utils/logger';
 
 /**
+ * Helper to check if a string is currently inside an open <think> block.
+ */
+export function isMidThinkBlock(text: string): boolean {
+    if (!text) return false;
+    const lastOpen = text.lastIndexOf("<think>");
+    const lastClose = text.lastIndexOf("</think>");
+    return lastOpen !== -1 && (lastClose === -1 || lastOpen > lastClose);
+}
+
+/**
  * Convert Markdown to Slack mrkdwn.
  * Handles:
  *   - Fenced code blocks: ```lang\ncode\n``` -> ```\ncode\n```
