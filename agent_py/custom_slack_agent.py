@@ -236,7 +236,30 @@ jaar = now.year
 datum_str = f"{dag_vd_week} {dag} {maand} {jaar}"
 
 with open(os.path.join(os.path.dirname(__file__), "system_prompt.md"), "r", encoding="utf-8") as f:
-    system_prompt = f.read().rstrip() + f"\n\nDatum: {datum_str}"
+    base_system_prompt = f.read().rstrip()
+
+def get_dutch_date():
+    from datetime import datetime
+    import locale
+    try:
+        locale.setlocale(locale.LC_TIME, "nl_NL.UTF-8")
+    except Exception:
+        pass
+    dagen = [
+        "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"
+    ]
+    maanden = [
+        "januari", "februari", "maart", "april", "mei", "juni",
+        "juli", "augustus", "september", "oktober", "november", "december"
+    ]
+    now = datetime.now()
+    dag_vd_week = dagen[now.weekday()]
+    dag = now.day
+    maand = maanden[now.month - 1]
+    jaar = now.year
+    return f"{dag_vd_week.capitalize()} {dag} {maand} {jaar}"
+
+system_prompt = f"{base_system_prompt}\n\nDatum: {get_dutch_date()}"
 
 _agent = Agent(
     name="SlackAssistant",
