@@ -431,6 +431,7 @@ export function streamingPreviewMessage(
  */
 export function aiResponseMessage(
     content: string,
+    isStreamingOpenThinkBlock: boolean = false,
     metadata?: Record<string, any>,
     functionResults?: string[]
 ): { blocks: Block[]; text: string } {
@@ -442,8 +443,6 @@ export function aiResponseMessage(
     const safeContent = content && content.trim().length > 0
         ? content
         : '(no content)';
-
-    // --- SPLIT HELPERS ---
 
     function findSafeSplitPoint(text: string, maxLength: number): number {
         let splitPoint = text.lastIndexOf(' ', maxLength);
@@ -510,83 +509,109 @@ export function aiResponseMessage(
         return sections.filter(section => section.length > 0);
     }
 
-    // --- MAIN SEGMENTATION LOGIC ---
-
     const finalContentBlocks: Block[] = [];
-    // Regex to find <think>...</think> blocks or other content.
-    // It captures <think> blocks (group 1) or regular text segments (group 2).
-    const segmentRegex = /(<think>[\s\S]*?<\/think>)|([\s\S]+?(?=<think>|$))/g;
-    let match;
 
-    const unprocessedContent = safeContent === '(no content)' ? '' : safeContent;
+    if (safeContent === '(no content)') {
+        finalContentBlocks.push(section('(no content)'));
+    } else {
+        let remainingContentToProcess = safeContent;
+        const thinkStartTag = "<think>";
+        const thinkEndTag = "</think>";
 
-    if (unprocessedContent) {
-        while ((match = segmentRegex.exec(unprocessedContent)) !== null) {
-            const thinkSegmentWithTags = match[1];
-            const regularSegment = match[2];
+        while (remainingContentToProcess.length > 0) {
+            const lastOpenThinkPos = remainingContentToProcess.lastIndexOf(thinkStartTag);
+            const lastCloseThinkPos = remainingContentToProcess.lastIndexOf(thinkEndTag);
 
-            if (thinkSegmentWithTags) {
-                const thinkContent = thinkSegmentWithTags.substring("<think>".length, thinkSegmentWithTags.length - "</think>".length).trim();
-                if (thinkContent) {
-                    const truncatedThinkContent = thinkContent.length > MAX_CHARS_PER_THINK_BLOCK
-                        ? thinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
-                        : thinkContent;
-                    // Display think content in a code block, as a single section
-                    finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
+            // Scenario 1: We are actively streaming an open think block
+            if (isStreamingOpenThinkBlock && lastOpenThinkPos !== -1 && (lastCloseThinkPos === -1 || lastOpenThinkPos > lastCloseThinkPos)) {
+                const textBeforeOpenThink = remainingContentToProcess.substring(0, lastOpenThinkPos);
+                const openThinkContent = remainingContentToProcess.substring(lastOpenThinkPos + thinkStartTag.length);
+
+                // Process text before the currently open think block (if any)
+                if (textBeforeOpenThink.trim()) {
+                    for (const chunk of splitTextIntoSections(textBeforeOpenThink.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
+                        if (chunk.trim() === '---') finalContentBlocks.push(divider());
+                        else if (chunk.trim()) finalContentBlocks.push(section(chunk));
+                    }
                 }
-            } else if (regularSegment) {
-                const trimmedRegularSegment = regularSegment.trim();
-                if (trimmedRegularSegment) {
-                    for (const chunk of splitTextIntoSections(trimmedRegularSegment, MAX_CHARS_PER_REGULAR_BLOCK)) {
-                        if (chunk.trim() === '---') {
-                            finalContentBlocks.push(divider());
-                        } else if (chunk.trim()) {
-                            finalContentBlocks.push(section(chunk));
+
+                // Process the open think block content
+                const truncatedThinkContent = openThinkContent.length > MAX_CHARS_PER_THINK_BLOCK
+                    ? openThinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                    : openThinkContent;
+                finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
+                remainingContentToProcess = ""; // Consumed all for this special streaming case
+                break; 
+            }
+
+            // Scenario 2: Normal processing (not specifically streaming an open think block, or it's the final call)
+            // Use the regex for segmentation.
+            const segmentRegex = /(<think>[\s\S]*?<\/think>)|([\s\S]+?(?=<think>|$))/g;
+            let match;
+            let lastProcessedIndex = 0;
+            
+            // Create a temporary string to apply the regex on, to avoid issues with global regex state if called multiple times.
+            let tempStringToSegment = remainingContentToProcess;
+            remainingContentToProcess = ""; // Assume we process it all now.
+
+            while ((match = segmentRegex.exec(tempStringToSegment)) !== null) {
+                lastProcessedIndex = match.index + match[0].length;
+                const thinkSegmentWithTags = match[1];
+                const regularSegment = match[2];
+
+                if (thinkSegmentWithTags) {
+                    const thinkContent = thinkSegmentWithTags.substring(thinkStartTag.length, thinkSegmentWithTags.length - thinkEndTag.length).trim();
+                    if (thinkContent) {
+                        const truncatedThinkContent = thinkContent.length > MAX_CHARS_PER_THINK_BLOCK
+                            ? thinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                            : thinkContent;
+                        finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
+                    }
+                } else if (regularSegment) {
+                    const trimmedRegularSegment = regularSegment.trim();
+                    if (trimmedRegularSegment) {
+                        for (const chunk of splitTextIntoSections(trimmedRegularSegment, MAX_CHARS_PER_REGULAR_BLOCK)) {
+                            if (chunk.trim() === '---') finalContentBlocks.push(divider());
+                            else if (chunk.trim()) finalContentBlocks.push(section(chunk));
                         }
                     }
                 }
             }
-        }
-    } else if (safeContent === '(no content)') {
-        finalContentBlocks.push(section('(no content)'));
-    }
-
-    // If regex processing yielded no blocks but there was original content, fall back (should be rare)
-    if (finalContentBlocks.length === 0 && safeContent.trim() && safeContent.trim() !== '(no content)') {
-        for (const chunk of splitTextIntoSections(safeContent, MAX_CHARS_PER_REGULAR_BLOCK)) {
-            if (chunk.trim() === '---') {
-                finalContentBlocks.push(divider());
-            } else if (chunk.trim()) {
-                finalContentBlocks.push(section(chunk));
+            // If regex didn't consume the whole tempStringToSegment (e.g. if it's empty or only partial match)
+            // this path should ideally not be hit if regex is exhaustive for non-empty strings.
+            if (lastProcessedIndex < tempStringToSegment.length) {
+                const rest = tempStringToSegment.substring(lastProcessedIndex).trim();
+                if (rest) {
+                    for (const chunk of splitTextIntoSections(rest, MAX_CHARS_PER_REGULAR_BLOCK)) {
+                        if (chunk.trim()) finalContentBlocks.push(section(chunk));
+                    }
+                }
             }
         }
     }
 
     const blocks: Block[] = [...finalContentBlocks];
 
-    if (functionResults && functionResults.length > 0) {
-        blocks.push(divider());
-        for (const result of functionResults) {
-            const pretty = `\`\`\`\n${result}\n\`\`\``;
-            for (const chunk of splitTextIntoSections(pretty, MAX_CHARS_PER_REGULAR_BLOCK)) {
-                if (chunk.trim()) {
-                    blocks.push(section(chunk));
+    // Add function results and metadata (typically for the final message)
+    if (!isStreamingOpenThinkBlock) {
+        if (functionResults && functionResults.length > 0) {
+            blocks.push(divider());
+            for (const result of functionResults) {
+                const pretty = `\`\`\`\n${result}\n\`\`\``;
+                for (const chunk of splitTextIntoSections(pretty, MAX_CHARS_PER_REGULAR_BLOCK)) {
+                    if (chunk.trim()) blocks.push(section(chunk));
                 }
             }
         }
-    }
 
-    if (metadata && Object.keys(metadata).length > 0) {
-        blocks.push(divider());
-        const metadataElements: Text[] = [];
-        if (metadata.model) {
-            metadataElements.push(mrkdwn(`*Model:* ${metadata.model}`));
-        }
-        if (metadataElements.length > 0) {
-            blocks.push(context(metadataElements));
+        if (metadata && Object.keys(metadata).length > 0) {
+            blocks.push(divider());
+            const metadataElements: Text[] = [];
+            if (metadata.model) metadataElements.push(mrkdwn(`*Model:* ${metadata.model}`));
+            if (metadataElements.length > 0) blocks.push(context(metadataElements));
         }
     }
-
+    
     const fallbackText = safeContent.substring(0, 150) + (safeContent.length > 150 ? '...' : '');
 
     return {
