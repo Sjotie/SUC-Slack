@@ -8,27 +8,6 @@ import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
 import sys
 
-# --- Patch the default encoding for reading files to utf-8 (workaround for litellm UnicodeDecodeError) ---
-import builtins
-import io
-
-_builtin_open = builtins.open
-def open_utf8_patch(file, mode='r', buffering=-1, encoding=None, *args, **kwargs):
-    # Always use utf-8 for text mode unless explicitly overridden
-    if 'b' not in mode and encoding is None:
-        encoding = 'utf-8'
-    # If reading JSON, force errors='replace' to avoid decode errors
-    if (
-        isinstance(file, str)
-        and file.endswith('.json')
-        and 'r' in mode
-        and 'b' not in mode
-        and ('errors' not in kwargs)
-    ):
-        kwargs['errors'] = 'replace'
-    return _builtin_open(file, mode, buffering, encoding, *args, **kwargs)
-builtins.open = open_utf8_patch
-
 from custom_slack_agent import slack_user_id_var   # shared ContextVar
 
 # ------------------------------------------------------------------
