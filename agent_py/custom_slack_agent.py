@@ -117,30 +117,30 @@ eu2_make_mcp_server = FilteredMCPServerSse(
 )
 
 # --- HubSpot MCP Server definition ---
-# hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
-# if not hubspot_mcp_token:
-#     print("WARNING: HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is not set. HubSpot MCP may not start correctly.")
+hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
+if not hubspot_mcp_token:
+    print("WARNING: HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is not set. HubSpot MCP may not start correctly.")
 
-# hubspot_mcp_server = MCPServerStdio(
-#     name="hubspot",
-#     params={
-#         # Use the right shell command per OS
-#         "command": "cmd" if os.name == "nt" else "npx",
-#         "args": (
-#             ["/c", "npx", "-y", "@hubspot/mcp-server"]
-#             if os.name == "nt"
-#             else ["-y", "@hubspot/mcp-server"]
-#         ),
-#         "env": {
-#             "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
-#             # Always set XDG_CONFIG_HOME to avoid "unbound variable" errors in npx shell scripts
-#             "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
-#         }
-#         # Optionally, add 'cwd' here if needed.
-#     },
-#     client_session_timeout_seconds=120.0,   # hubspot server needs a bit more time to start
-#     # cache_tools_list=True
-# )
+hubspot_mcp_server = MCPServerStdio(
+    name="hubspot",
+    params={
+        # Use the right shell command per OS
+        "command": "cmd" if os.name == "nt" else "npx",
+        "args": (
+            ["/c", "npx", "-y", "@hubspot/mcp-server"]
+            if os.name == "nt"
+            else ["-y", "@hubspot/mcp-server"]
+        ),
+        "env": {
+            "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
+            # Always set XDG_CONFIG_HOME to avoid "unbound variable" errors in npx shell scripts
+            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
+        }
+        # Optionally, add 'cwd' here if needed.
+    },
+    client_session_timeout_seconds=120.0,   # hubspot server needs a bit more time to start
+    # cache_tools_list=True
+)
 
 # ------------------------------------------------------------------
 # Monkey-patch: some HubSpot tools declare an array but forget to
@@ -149,29 +149,29 @@ eu2_make_mcp_server = FilteredMCPServerSse(
 # `{"type": "string"}` when it’s missing.
 # ------------------------------------------------------------------
 
-# def _ensure_items(node: Any) -> None:
-#     """Recursively ensure each array schema has an `items` key."""
-#     if isinstance(node, dict):
-#         if node.get("type") == "array" and "items" not in node:
-#             node["items"] = {"type": "string"}        # minimal, safe default
-#         for value in node.values():
-#             _ensure_items(value)
-#     elif isinstance(node, list):
-#         for item in node:
-#             _ensure_items(item)
+def _ensure_items(node: Any) -> None:
+    """Recursively ensure each array schema has an `items` key."""
+    if isinstance(node, dict):
+        if node.get("type") == "array" and "items" not in node:
+            node["items"] = {"type": "string"}        # minimal, safe default
+        for value in node.values():
+            _ensure_items(value)
+    elif isinstance(node, list):
+        for item in node:
+            _ensure_items(item)
 
-# if hubspot_mcp_server is not None:
-#     _orig_list_tools = hubspot_mcp_server.list_tools
+if hubspot_mcp_server is not None:
+    _orig_list_tools = hubspot_mcp_server.list_tools
 
-#     async def _patched_list_tools(*args, **kwargs):
-#         tools = await _orig_list_tools(*args, **kwargs)
-#         for tool in tools:
-#             params = tool.get("parameters")
-#             if params:
-#                 _ensure_items(params)
-#         return tools
+    async def _patched_list_tools(*args, **kwargs):
+        tools = await _orig_list_tools(*args, **kwargs)
+        for tool in tools:
+            params = tool.get("parameters")
+            if params:
+                _ensure_items(params)
+        return tools
 
-#     hubspot_mcp_server.list_tools = _patched_list_tools
+    hubspot_mcp_server.list_tools = _patched_list_tools
 
 # --- Slack MCP Server definition ---
 slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
@@ -272,7 +272,7 @@ _agent = Agent(
     name="SlackAssistant",
     model=agent_model_name_from_env, # Use the model name directly
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],
+    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server, hubspot_mcp_server],
     model_settings=custom_model_settings
 )
 
