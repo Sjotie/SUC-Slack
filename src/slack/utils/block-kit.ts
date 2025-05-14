@@ -434,140 +434,164 @@ export function aiResponseMessage(
     metadata?: Record<string, any>,
     functionResults?: string[]
 ): { blocks: Block[]; text: string } {
+    // --- BLOCK SIZE CONSTANTS ---
+    const MAX_CHARS_PER_REGULAR_BLOCK = 250;
+    const MAX_CHARS_PER_THINK_BLOCK = 3000;
+
     // Slack requires at least one visible character.
     const safeContent = content && content.trim().length > 0
         ? content
         : '(no content)';
 
-    // --- NEW BLOCK CREATION LOGIC ---
-    // Slack block size set to 250 characters for chunking.
-    const MAX_CHARS_PER_BLOCK = 250;
+    // --- SPLIT HELPERS ---
 
-    /**
-     * Zorg dat we nooit middenin een Markdown-link ( <https://> )
-     * of een code-blok (```  ```) afbreken  dat veroorzaakt het
-     * verdwijnen van links of tekst in Slack.
-     *
-     * @param text  De string die we willen afkappen
-     * @returns  Index waar we veilig kunnen splitsen ( MAX_CHARS_PER_BLOCK)
-     */
-    function findSafeSplitPoint(text: string): number {
-        // Eerste voorkeur: laatste spatie vóór het limiet
-        let splitPoint = text.lastIndexOf(' ', MAX_CHARS_PER_BLOCK);
-        if (splitPoint <= 0) splitPoint = MAX_CHARS_PER_BLOCK;
-
-        // 1) Breek niet binnen een <link>
+    function findSafeSplitPoint(text: string, maxLength: number): number {
+        let splitPoint = text.lastIndexOf(' ', maxLength);
+        if (splitPoint === -1 || splitPoint === 0 || splitPoint > maxLength) {
+            splitPoint = maxLength;
+        }
         const head = text.slice(0, splitPoint);
-        const open  = head.lastIndexOf('<');
-        const close = head.lastIndexOf('>');
-        if (open > close) {
-            // We zitten ín een link; verplaats split naar vóór de '<'
-            splitPoint = head.lastIndexOf(' ', open) > 0
-                ? head.lastIndexOf(' ', open)
-                : open;
+
+        // 1) Avoid splitting inside a Markdown link <...>
+        const openLink = head.lastIndexOf('<');
+        const closeLink = head.lastIndexOf('>');
+        if (openLink > closeLink && head.substring(openLink).match(/^<(?:https?:\/\/|mailto:|@U|#C)[^>]*$/)) {
+            const spaceBeforeLink = head.lastIndexOf(' ', openLink);
+            if (spaceBeforeLink !== -1 && spaceBeforeLink > 0) {
+                splitPoint = spaceBeforeLink;
+            } else if (openLink > 0) {
+                splitPoint = openLink;
+            }
         }
 
-        // 2) Breek niet middenin een drietal back-ticks
-        const backticks = head.match(/```/g)?.length ?? 0;
-        if (backticks % 2 === 1) {
-            // Oneven aantal  we zitten in een code-blok
-            const newPt = head.lastIndexOf('```');
-            splitPoint = newPt > 0 ? newPt : splitPoint;
+        // 2) Avoid splitting inside a code block ```...```
+        const backticksMatch = [...head.matchAll(/```/g)];
+        if (backticksMatch.length % 2 === 1) {
+            const lastBacktickGroup = backticksMatch[backticksMatch.length - 1];
+            if (lastBacktickGroup.index !== undefined) {
+                const spaceBeforeCodeBlock = head.lastIndexOf(' ', lastBacktickGroup.index);
+                if (spaceBeforeCodeBlock !== -1 && spaceBeforeCodeBlock > 0) {
+                    splitPoint = spaceBeforeCodeBlock;
+                } else if (lastBacktickGroup.index > 0) {
+                    splitPoint = lastBacktickGroup.index;
+                }
+            }
         }
-
-        return splitPoint;
+        return Math.max(1, splitPoint);
     }
 
-    // -------- helper: split `text` into sections on sentence boundaries --------
-    function splitTextIntoSections(text: string, maxLen: number = MAX_CHARS_PER_BLOCK): string[] {
-        const sentences = text.split(/(?<=[\.!?])\s+/);          // crude sentence split
+    function splitTextIntoSections(text: string, maxLen: number): string[] {
+        const sentences = text.split(/(?<=[\.!?])\s+/);
         const sections: string[] = [];
         let buf = '';
 
         for (const s of sentences) {
-            if ((buf + ' ' + s).trim().length <= maxLen) {
-                buf = buf ? `${buf} ${s}` : s;
+            const trimmedSentence = s.trim();
+            if (!trimmedSentence) continue;
+
+            if ((buf + (buf ? ' ' : '') + trimmedSentence).trim().length <= maxLen) {
+                buf = buf ? `${buf} ${trimmedSentence}` : trimmedSentence;
             } else {
-                if (buf) sections.push(buf.trim());
-                if (s.length > maxLen) {
-                    // hard-split very long sentence
-                    let rest = s;
+                if (buf.trim()) sections.push(buf.trim());
+                if (trimmedSentence.length > maxLen) {
+                    let rest = trimmedSentence;
                     while (rest.length > maxLen) {
-                        const splitPoint = findSafeSplitPoint(rest);
+                        const splitPoint = findSafeSplitPoint(rest, maxLen);
                         sections.push(rest.slice(0, splitPoint));
                         rest = rest.slice(splitPoint).trimStart();
                     }
-                    buf = rest;
+                    buf = rest.trim();
                 } else {
-                    buf = s;
+                    buf = trimmedSentence;
                 }
             }
         }
-        if (buf) sections.push(buf.trim());
-        return sections;
+        if (buf.trim()) sections.push(buf.trim());
+        return sections.filter(section => section.length > 0);
     }
+
+    // --- MAIN SEGMENTATION LOGIC ---
 
     const finalContentBlocks: Block[] = [];
-    for (const chunk of splitTextIntoSections(safeContent)) {
-        if (chunk.trim() === '---') {
-            finalContentBlocks.push(divider());
-        } else {
-            finalContentBlocks.push(section(chunk));
-        }
-    }
-    // --- END NEW BLOCK CREATION LOGIC ---
+    // Regex to find <think>...</think> blocks or other content.
+    // It captures <think> blocks (group 1) or regular text segments (group 2).
+    const segmentRegex = /(<think>[\s\S]*?<\/think>)|([\s\S]+?(?=<think>|$))/g;
+    let match;
 
+    const unprocessedContent = safeContent === '(no content)' ? '' : safeContent;
 
-    const blocks: Block[] = [...finalContentBlocks]; // Start with the generated content blocks
+    if (unprocessedContent) {
+        while ((match = segmentRegex.exec(unprocessedContent)) !== null) {
+            const thinkSegmentWithTags = match[1];
+            const regularSegment = match[2];
 
-    // Helper to split long function results into blocks
-    function createBlocksFromContent(text: string): Block[] {
-        const blocks: Block[] = [];
-        let remaining = text;
-        while (remaining.length > 0) {
-            if (remaining.length <= MAX_CHARS_PER_BLOCK) {
-                blocks.push(section(remaining));
-                break;
+            if (thinkSegmentWithTags) {
+                const thinkContent = thinkSegmentWithTags.substring("<think>".length, thinkSegmentWithTags.length - "</think>".length).trim();
+                if (thinkContent) {
+                    const truncatedThinkContent = thinkContent.length > MAX_CHARS_PER_THINK_BLOCK
+                        ? thinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                        : thinkContent;
+                    // Display think content in a code block, as a single section
+                    finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
+                }
+            } else if (regularSegment) {
+                const trimmedRegularSegment = regularSegment.trim();
+                if (trimmedRegularSegment) {
+                    for (const chunk of splitTextIntoSections(trimmedRegularSegment, MAX_CHARS_PER_REGULAR_BLOCK)) {
+                        if (chunk.trim() === '---') {
+                            finalContentBlocks.push(divider());
+                        } else if (chunk.trim()) {
+                            finalContentBlocks.push(section(chunk));
+                        }
+                    }
+                }
             }
-            const splitPoint = findSafeSplitPoint(remaining);
-            blocks.push(section(remaining.substring(0, splitPoint)));
-            remaining = remaining.substring(splitPoint).trimStart();
         }
-        return blocks;
+    } else if (safeContent === '(no content)') {
+        finalContentBlocks.push(section('(no content)'));
     }
 
-    // Add function results if provided
+    // If regex processing yielded no blocks but there was original content, fall back (should be rare)
+    if (finalContentBlocks.length === 0 && safeContent.trim() && safeContent.trim() !== '(no content)') {
+        for (const chunk of splitTextIntoSections(safeContent, MAX_CHARS_PER_REGULAR_BLOCK)) {
+            if (chunk.trim() === '---') {
+                finalContentBlocks.push(divider());
+            } else if (chunk.trim()) {
+                finalContentBlocks.push(section(chunk));
+            }
+        }
+    }
+
+    const blocks: Block[] = [...finalContentBlocks];
+
     if (functionResults && functionResults.length > 0) {
         blocks.push(divider());
         for (const result of functionResults) {
             const pretty = `\`\`\`\n${result}\n\`\`\``;
-            for (const chunk of splitTextIntoSections(pretty)) {
-                blocks.push(section(chunk));
+            for (const chunk of splitTextIntoSections(pretty, MAX_CHARS_PER_REGULAR_BLOCK)) {
+                if (chunk.trim()) {
+                    blocks.push(section(chunk));
+                }
             }
         }
     }
 
-    // Add metadata if provided
     if (metadata && Object.keys(metadata).length > 0) {
         blocks.push(divider());
         const metadataElements: Text[] = [];
         if (metadata.model) {
-             metadataElements.push(mrkdwn(`*Model:* ${metadata.model}`));
+            metadataElements.push(mrkdwn(`*Model:* ${metadata.model}`));
         }
-        // Add other metadata fields if needed, separated by " | " or similar
-        // Example: if (metadata.finishReason) { metadataElements.push(mrkdwn(`*Finish:* ${metadata.finishReason}`)) }
-
         if (metadataElements.length > 0) {
-             blocks.push(context(metadataElements));
+            blocks.push(context(metadataElements));
         }
     }
 
-    // Generate fallback text for notifications (keep it short)
     const fallbackText = safeContent.substring(0, 150) + (safeContent.length > 150 ? '...' : '');
 
     return {
-        blocks,
-        text: fallbackText, // Use short fallback text
+        blocks: blocks.length > 0 ? blocks : [section(mrkdwn(fallbackText || '(empty response)'))],
+        text: fallbackText,
     };
 }
 
