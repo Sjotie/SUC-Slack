@@ -477,8 +477,8 @@ export function aiResponseMessage(
     // --- BLOCK SIZE CONSTANTS ---
     const MAX_CHARS_PER_REGULAR_BLOCK = 250;
     // Slack section block text field limit is 3000 chars, but we need to account for "```\n" + content + "\n```" + "..." (if truncated)
-    // So, 2990 is safe (3000 - 10 for formatting and ellipsis)
-    const MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK = 2990;
+    // 2759 is a conservative value to leave extra buffer for formatting and ellipsis
+    const MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK = 2759;
 
     // Slack requires at least one visible character.
     const safeContent = content && content.trim().length > 0
