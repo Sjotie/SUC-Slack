@@ -445,38 +445,57 @@ export function aiResponseMessage(
         : '(no content)';
 
     function findSafeSplitPoint(text: string, maxLength: number): number {
+        if (maxLength >= text.length) return text.length;
+        if (maxLength <= 0) return 0;
+
+        // Prioritize splitting after natural terminators within the maxLength
+        for (let i = Math.min(maxLength - 1, text.length - 1); i >= 0; i--) {
+            if (text[i] === '\n') { // Newline is a strong candidate
+                return i + 1;
+            }
+            // Sentence ending followed by space or end of string
+            if (text[i].match(/[.!?]/) && (i + 1 === text.length || text[i + 1] === ' ' || text[i+1] === '\n')) {
+                return i + 1; // Split after the punctuation
+            }
+        }
+
+        // If no natural terminator, try last space within maxLength
         let splitPoint = text.lastIndexOf(' ', maxLength);
-        if (splitPoint === -1 || splitPoint === 0 || splitPoint > maxLength) {
-            splitPoint = maxLength;
+        if (splitPoint === -1 || splitPoint === 0) { // No space, or space at start
+            splitPoint = maxLength; // Hard cut if no suitable space
+        } else {
+            splitPoint = splitPoint + 1; // Split after the space
         }
-        const head = text.slice(0, splitPoint);
 
-        // 1) Avoid splitting inside a Markdown link <...>
-        const openLink = head.lastIndexOf('<');
-        const closeLink = head.lastIndexOf('>');
-        if (openLink > closeLink && head.substring(openLink).match(/^<(?:https?:\/\/|mailto:|@U|#C)[^>]*$/)) {
-            const spaceBeforeLink = head.lastIndexOf(' ', openLink);
-            if (spaceBeforeLink !== -1 && spaceBeforeLink > 0) {
-                splitPoint = spaceBeforeLink;
-            } else if (openLink > 0) {
-                splitPoint = openLink;
+        // Heuristics to avoid breaking common markdown mid-sequence around the chosen splitPoint
+        if (splitPoint > 0 && splitPoint < text.length) {
+            const charBefore = text[splitPoint - 1];
+            const twoCharsBefore = text.substring(Math.max(0, splitPoint - 2), splitPoint);
+
+            // Avoid splitting like: **text | ** (where | is splitPoint)
+            if (charBefore === '*' && text.lastIndexOf('**', splitPoint -1) > text.lastIndexOf('**', text.lastIndexOf('**', splitPoint -1)-1) && text.lastIndexOf('**', splitPoint-1) !== -1) {
+                const openingStars = text.lastIndexOf('**', splitPoint - 1);
+                if (openingStars !== -1) splitPoint = openingStars;
+            } else if (charBefore === '*' && text.lastIndexOf('*', splitPoint -1) > text.lastIndexOf('*', text.lastIndexOf('*', splitPoint -1)-1) && text.lastIndexOf('*', splitPoint-1) !== -1 && twoCharsBefore !== '**') {
+                const openingStar = text.lastIndexOf('*', splitPoint - 1);
+                if (openingStar !== -1) splitPoint = openingStar;
+            } else if (charBefore === '_' && text.lastIndexOf('_', splitPoint -1) > text.lastIndexOf('_', text.lastIndexOf('_', splitPoint -1)-1) && text.lastIndexOf('_', splitPoint-1) !== -1 ) {
+                const openingUnderscore = text.lastIndexOf('_', splitPoint - 1);
+                if (openingUnderscore !== -1) splitPoint = openingUnderscore;
+            } else if (charBefore === '`' && text.lastIndexOf('`', splitPoint -1) > text.lastIndexOf('`', text.lastIndexOf('`', splitPoint -1)-1) && text.lastIndexOf('`', splitPoint-1) !== -1 && text.substring(Math.max(0, splitPoint - 3), splitPoint) !== '```' ) {
+                const openingBacktick = text.lastIndexOf('`', splitPoint - 1);
+                if (openingBacktick !== -1) splitPoint = openingBacktick;
+            } else if (charBefore === '~' && text.lastIndexOf('~', splitPoint -1) > text.lastIndexOf('~', text.lastIndexOf('~', splitPoint -1)-1) && text.lastIndexOf('~', splitPoint-1) !== -1 ) {
+                const openingTilde = text.lastIndexOf('~', splitPoint - 1);
+                if (openingTilde !== -1) splitPoint = openingTilde;
+            }
+            // Avoid splitting common "label:" type structures if split is right after colon
+            if (charBefore === ':' && splitPoint > 1 && text[splitPoint - 2].match(/\w/)) {
+                // Could refine further if needed
             }
         }
 
-        // 2) Avoid splitting inside a code block ```...```
-        const backticksMatch = [...head.matchAll(/```/g)];
-        if (backticksMatch.length % 2 === 1) {
-            const lastBacktickGroup = backticksMatch[backticksMatch.length - 1];
-            if (lastBacktickGroup.index !== undefined) {
-                const spaceBeforeCodeBlock = head.lastIndexOf(' ', lastBacktickGroup.index);
-                if (spaceBeforeCodeBlock !== -1 && spaceBeforeCodeBlock > 0) {
-                    splitPoint = spaceBeforeCodeBlock;
-                } else if (lastBacktickGroup.index > 0) {
-                    splitPoint = lastBacktickGroup.index;
-                }
-            }
-        }
-        return Math.max(1, splitPoint);
+        return Math.max(1, Math.min(splitPoint, text.length));
     }
 
     function splitTextIntoSections(text: string, maxLen: number): string[] {

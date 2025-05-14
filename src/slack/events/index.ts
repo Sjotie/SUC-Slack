@@ -116,8 +116,15 @@ async function processMessageAndGenerateResponse(
     // Use a single buffer for the raw response from the LLM
     let rawResponseBuffer = '';
 
+    // --- Streaming flush control constants and state ---
+    const MIN_FLUSH_LEN_REGULAR = 100;
+    const MIN_FLUSH_LEN_THINK = 180;
+    const SENTENCE_END_RE = /[.!?]\s|[.\n]\n/;
+    const MIN_SENTENCES_THINK = 2;
+    let lastUpdateTime = 0;
+    const MIN_UPDATE_INTERVAL_MS = 800;
+
     try {
-        // --- START TOEGEVOEGDE CODE ---
         if (!botUserId) {
             try {
                 logger.info(`${logEmoji.slack} Bot user ID not initialized, fetching...`);
@@ -176,12 +183,11 @@ async function processMessageAndGenerateResponse(
             conversationUtils.addUserMessageToThread(threadInfo, messageTextOrContent);
         }
 
-        // --- MODIFICATION START: Prepare prompt specifically for the AI ---
+        // --- Prepare prompt for AI ---
         let promptForAI: string | MessageContent[];
 
         if (typeof messageTextOrContent === 'string') {
             promptForAI = `[${userName}] ${messageTextOrContent}`;
-            logger.debug(`${logEmoji.ai} Prepared text prompt for AI: ${promptForAI}`);
         } else {
             promptForAI = messageTextOrContent.map((part, index) => {
                 if (part.type === 'input_text' && index === messageTextOrContent.findIndex(p => p.type === 'input_text')) {
@@ -192,10 +198,7 @@ async function processMessageAndGenerateResponse(
                 }
                 return part;
             });
-            const promptSummary = promptForAI.map(p => p.type === 'input_image' ? {type: p.type, image_url:'<data_uri>'} : p);
-            logger.debug(`${logEmoji.ai} Prepared multimodal prompt for AI: ${JSON.stringify(promptSummary)}`);
         }
-        // --- MODIFICATION END ---
 
         const eventStream = aiClient.generateResponseStream(
             promptForAI,
@@ -214,21 +217,52 @@ async function processMessageAndGenerateResponse(
                         rawResponseBuffer += event.data;
 
                         if (lastMessageTs) {
+                            const currentTime = Date.now();
                             const isCurrentlyMidThink = rawResponseBuffer.includes("<think>") &&
                                 (!rawResponseBuffer.includes("</think>") ||
                                  rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
-                            const msgPayload = blockKit.aiResponseMessage(rawResponseBuffer, isCurrentlyMidThink);
-                            try {
-                                await conversationUtils.updateMessage(
-                                    app,
-                                    threadInfo.channelId,
-                                    lastMessageTs,
-                                    msgPayload.blocks as any[],
-                                    msgPayload.text
-                                );
-                                logger.debug(`${logEmoji.slack} Stream update to ${lastMessageTs}. Mid-think: ${isCurrentlyMidThink}. Buffer size: ${rawResponseBuffer.length}`);
-                            } catch (updateError: any) {
-                                logger.warn(`${logEmoji.warning} Error updating message during stream: ${updateError.message}`, { code: updateError.code });
+
+                            let shouldUpdateSlack = false;
+                            const activeSegmentForFlushCheck = isCurrentlyMidThink ?
+                                rawResponseBuffer.substring(rawResponseBuffer.lastIndexOf("<think>"))
+                                : rawResponseBuffer.substring(rawResponseBuffer.lastIndexOf("</think>") + "</think>".length);
+
+                            if (currentTime - lastUpdateTime >= MIN_UPDATE_INTERVAL_MS) {
+                                if (isCurrentlyMidThink) {
+                                    const sentencesInThink = (activeSegmentForFlushCheck.match(SENTENCE_END_RE) || []).length;
+                                    if (activeSegmentForFlushCheck.length >= MIN_FLUSH_LEN_THINK || sentencesInThink >= MIN_SENTENCES_THINK) {
+                                        shouldUpdateSlack = true;
+                                    }
+                                } else {
+                                    if (activeSegmentForFlushCheck.length >= MIN_FLUSH_LEN_REGULAR && SENTENCE_END_RE.test(activeSegmentForFlushCheck)) {
+                                        shouldUpdateSlack = true;
+                                    }
+                                }
+                            }
+                            // Force update if buffer is very large or a think block just closed
+                            if (rawResponseBuffer.length > 2800 || (event.data.includes("</think>") && isCurrentlyMidThink)) {
+                                shouldUpdateSlack = true;
+                            }
+                            // If the stream seems to be ending (smaller chunks often indicate this)
+                            if (event.data.length < 10 && (SENTENCE_END_RE.test(rawResponseBuffer) || rawResponseBuffer.endsWith("\n"))) {
+                                shouldUpdateSlack = true;
+                            }
+
+                            if (shouldUpdateSlack) {
+                                const msgPayload = blockKit.aiResponseMessage(rawResponseBuffer, isCurrentlyMidThink);
+                                try {
+                                    await conversationUtils.updateMessage(
+                                        app,
+                                        threadInfo.channelId,
+                                        lastMessageTs,
+                                        msgPayload.blocks as any[],
+                                        msgPayload.text
+                                    );
+                                    lastUpdateTime = Date.now();
+                                    logger.debug(`${logEmoji.slack} Stream update to ${lastMessageTs}. Mid-think: ${isCurrentlyMidThink}. Len: ${rawResponseBuffer.length}`);
+                                } catch (updateError: any) {
+                                    logger.warn(`${logEmoji.warning} Slack update error: ${updateError.message}`, { code: updateError.code });
+                                }
                             }
                         }
                     }
@@ -236,11 +270,14 @@ async function processMessageAndGenerateResponse(
 
                 case 'tool_call':
                 case 'tool_calls': {
-                    // Finalize any text streamed so far before handling tool call
                     if (rawResponseBuffer.trim() && lastMessageTs) {
-                        const finalPreToolPayload = blockKit.aiResponseMessage(rawResponseBuffer, false, finalMetadata);
+                        const isMidThinkFinal = rawResponseBuffer.includes("<think>") && (!rawResponseBuffer.includes("</think>") || rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
+                        const finalPreToolPayload = blockKit.aiResponseMessage(rawResponseBuffer, isMidThinkFinal);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, finalPreToolPayload.blocks as any[], finalPreToolPayload.text);
-                        conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
+                        if(rawResponseBuffer.trim()){
+                            conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
+                        }
+                        lastUpdateTime = Date.now();
                     }
                     rawResponseBuffer = '';
 
@@ -271,8 +308,8 @@ async function processMessageAndGenerateResponse(
                     if (toolMessageTs) {
                         const toolResultData = event.data?.result ?? event.data;
                         const resultSummary = typeof toolResultData === 'string'
-                            ? toolResultData.substring(0, 120)
-                            : '[resultaat ontvangen]';
+                            ? toolResultData.substring(0, 120) + (toolResultData.length > 120 ? "..." : "")
+                            : '[result data received]';
 
                         const messageUpdate = blockKit.functionCallMessage(
                             currentToolName || event.data?.tool_name || 'tool',
@@ -290,6 +327,8 @@ async function processMessageAndGenerateResponse(
 
                         lastMessageTs = undefined;
                         rawResponseBuffer = '';
+                        toolMessageTs = undefined;
+                        currentToolName = undefined;
                     }
                     break;
 
@@ -304,70 +343,63 @@ async function processMessageAndGenerateResponse(
                     break;
 
                 case 'error':
-                    logger.error(`${logEmoji.error} Error received from agent stream:`, event.data);
+                    logger.error(`${logEmoji.error} Agent stream error:`, event.data);
+                    const errorMsgContent = String(event.data?.message || event.data || "Unknown agent error");
                     if (lastMessageTs) {
-                        const errorBlocks = blockKit.errorMessage('Agent Error', 'Er is een fout opgetreden bij de agent.', String(event.data));
+                        const errorBlocks = blockKit.errorMessage('Agent Error', 'An error occurred with the AI agent.', errorMsgContent);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
+                    } else if (thinkingMessageTs) {
+                        const errorBlocks = blockKit.errorMessage('Agent Error', 'An error occurred with the AI agent.', errorMsgContent);
+                        await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
                     } else {
-                        await conversationUtils.sendErrorMessage(app, threadInfo, 'Agent Stream Error', String(event.data));
+                        await conversationUtils.sendErrorMessage(app, threadInfo, 'Agent Stream Error', errorMsgContent);
                     }
                     return;
 
                 default:
-                    logger.warn(`${logEmoji.warning} Received unknown/unhandled agent event type: ${event.type}`);
+                    logger.warn(`${logEmoji.warning} Unknown agent event: ${event.type}`);
             }
         }
 
-        logger.debug(`${logEmoji.ai} Preparing final message. Full raw content length: ${rawResponseBuffer.length}`);
-        
-        if (rawResponseBuffer.trim() || (finalMetadata && Object.keys(finalMetadata).length > 0) ) {
+        logger.debug(`${logEmoji.ai} Final processing. Raw buffer length: ${rawResponseBuffer.length}`);
+
+        if (rawResponseBuffer.trim() || (finalMetadata && Object.keys(finalMetadata).length > 0) || (thinkingMessageTs && !lastMessageTs && !toolMessageTs)) {
             const finalMsgPayload = blockKit.aiResponseMessage(rawResponseBuffer, false, finalMetadata);
 
             if (lastMessageTs) {
-                logger.info(`${logEmoji.slack} Updating message ${lastMessageTs} with final accumulated content.`);
+                logger.info(`${logEmoji.slack} Updating message ${lastMessageTs} with final content.`);
                 await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, finalMsgPayload.blocks as any[], finalMsgPayload.text);
+            } else if (thinkingMessageTs) {
+                logger.info(`${logEmoji.slack} Updating initial thinking message ${thinkingMessageTs} with final content.`);
+                await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, finalMsgPayload.blocks as any[], finalMsgPayload.text);
+                lastMessageTs = thinkingMessageTs;
             } else {
-                logger.info(`${logEmoji.slack} Posting new message with final accumulated content.`);
+                logger.info(`${logEmoji.slack} Posting new final message.`);
                 const res = await client.chat.postMessage({
-                    channel: threadInfo.channelId,
-                    thread_ts: threadInfo.threadTs,
+                    channel: threadInfo.channelId, thread_ts: threadInfo.threadTs,
                     ...finalMsgPayload,
                 });
                 lastMessageTs = res.ts as string;
             }
-            conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
-        } else if (!lastMessageTs && thinkingMessageTs) {
-            logger.info(`${logEmoji.slack} No content generated by AI. Updating thinking message ${thinkingMessageTs}.`);
-            const noContentMsg = blockKit.aiResponseMessage("(No response generated)", false, finalMetadata);
-            await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, noContentMsg.blocks as any[], noContentMsg.text);
+            if(rawResponseBuffer.trim()){
+                conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
+            }
         }
 
-    } catch (error) {
-        logger.error(`${logEmoji.error} Error processing message stream or initial setup`, {
-            errorMessage: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined
-        });
+    } catch (error: any) {
+        logger.error(`${logEmoji.error} Error in processMessageAndGenerateResponse`, { errorMessage: error.message, stack: error.stack });
+        const errorTitle = 'Error Processing Request';
+        const errorDetail = error.message || 'An unexpected error occurred.';
         if (thinkingMessageTs) {
             try {
-                const errorBlocks = blockKit.errorMessage('Error Processing Request', 'An error occurred while generating the response.', error instanceof Error ? error.message : String(error));
-                await conversationUtils.updateMessage(
-                    app,
-                    threadInfo.channelId,
-                    thinkingMessageTs,
-                    errorBlocks.blocks as any[],
-                    errorBlocks.text
-                );
+                const errorBlocks = blockKit.errorMessage(errorTitle, 'An error occurred while generating the response.', errorDetail);
+                await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
             } catch (updateError) {
-                logger.error(`${logEmoji.error} Failed to update thinking message ${thinkingMessageTs} with processing error`, { updateError });
+                logger.error(`${logEmoji.error} Failed to update thinking message with error`, { updateError });
+                await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetail);
             }
         } else {
-            await conversationUtils.sendErrorMessage(
-                app,
-                threadInfo,
-                'Error Processing Request',
-                'An error occurred while generating the response.',
-                error instanceof Error ? error.message : String(error)
-            );
+            await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetail);
         }
     }
 }
