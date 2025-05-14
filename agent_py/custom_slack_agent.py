@@ -149,29 +149,29 @@ hubspot_mcp_server = MCPServerStdio(
 # `{"type": "string"}` when it’s missing.
 # ------------------------------------------------------------------
 
-def _ensure_items(node: Any) -> None:
-    """Recursively ensure each array schema has an `items` key."""
-    if isinstance(node, dict):
-        if node.get("type") == "array" and "items" not in node:
-            node["items"] = {"type": "string"}        # minimal, safe default
-        for value in node.values():
-            _ensure_items(value)
-    elif isinstance(node, list):
-        for item in node:
-            _ensure_items(item)
+# def _ensure_items(node: Any) -> None:
+#     """Recursively ensure each array schema has an `items` key."""
+#     if isinstance(node, dict):
+#         if node.get("type") == "array" and "items" not in node:
+#             node["items"] = {"type": "string"}        # minimal, safe default
+#         for value in node.values():
+#             _ensure_items(value)
+#     elif isinstance(node, list):
+#         for item in node:
+#             _ensure_items(item)
 
-if hubspot_mcp_server is not None:
-    _orig_list_tools = hubspot_mcp_server.list_tools
+# if hubspot_mcp_server is not None:
+#     _orig_list_tools = hubspot_mcp_server.list_tools
 
-    async def _patched_list_tools(*args, **kwargs):
-        tools = await _orig_list_tools(*args, **kwargs)
-        for tool in tools:
-            params = tool.get("parameters")
-            if params:
-                _ensure_items(params)
-        return tools
+#     async def _patched_list_tools(*args, **kwargs):
+#         tools = await _orig_list_tools(*args, **kwargs)
+#         for tool in tools:
+#             params = tool.get("parameters")
+#             if params:
+#                 _ensure_items(params)
+#         return tools
 
-    hubspot_mcp_server.list_tools = _patched_list_tools
+#     hubspot_mcp_server.list_tools = _patched_list_tools
 
 # --- Slack MCP Server definition ---
 slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
