@@ -476,7 +476,9 @@ export function aiResponseMessage(
 ): { blocks: Block[]; text: string } {
     // --- BLOCK SIZE CONSTANTS ---
     const MAX_CHARS_PER_REGULAR_BLOCK = 250;
-    const MAX_CHARS_PER_THINK_BLOCK = 3000;
+    // Slack section block text field limit is 3000 chars, but we need to account for "```\n" + content + "\n```" + "..." (if truncated)
+    // So, 2990 is safe (3000 - 10 for formatting and ellipsis)
+    const MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK = 2990;
 
     // Slack requires at least one visible character.
     const safeContent = content && content.trim().length > 0
@@ -603,8 +605,8 @@ export function aiResponseMessage(
                 // Think content itself is typically pre-formatted or plain, usually not needing heavy md conversion for display in ```
                 // However, if it CAN contain markdown that needs conversion before being wrapped in ```:
                 // openThinkContentRaw = convertMarkdownToSlackMrkdwn(openThinkContentRaw); 
-                const truncatedThinkContent = openThinkContentRaw.length > MAX_CHARS_PER_THINK_BLOCK
-                    ? openThinkContentRaw.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                const truncatedThinkContent = openThinkContentRaw.length > MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK
+                    ? openThinkContentRaw.substring(0, MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK) + "..."
                     : openThinkContentRaw;
                 finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
                 
@@ -629,8 +631,8 @@ export function aiResponseMessage(
                     let thinkContentRaw = thinkSegmentWithTags.substring(thinkStartTag.length, thinkSegmentWithTags.length - thinkEndTag.length).trim();
                     if (thinkContentRaw) {
                         // thinkContentRaw = convertMarkdownToSlackMrkdwn(thinkContentRaw); // Optional: if think content needs conversion
-                        const truncatedThinkContent = thinkContentRaw.length > MAX_CHARS_PER_THINK_BLOCK
-                            ? thinkContentRaw.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                        const truncatedThinkContent = thinkContentRaw.length > MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK
+                            ? thinkContentRaw.substring(0, MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK) + "..."
                             : thinkContentRaw;
                         finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
                     }
