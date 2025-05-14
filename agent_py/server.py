@@ -6,6 +6,17 @@ import os
 import asyncio
 import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
+import sys
+
+# --- Patch the default encoding for reading files to utf-8 (workaround for litellm UnicodeDecodeError) ---
+import builtins
+_builtin_open = builtins.open
+def open_utf8_patch(file, mode='r', buffering=-1, encoding=None, *args, **kwargs):
+    if 'b' not in mode and encoding is None:
+        encoding = 'utf-8'
+    return _builtin_open(file, mode, buffering, encoding, *args, **kwargs)
+builtins.open = open_utf8_patch
+
 from custom_slack_agent import slack_user_id_var   # shared ContextVar
 
 # ------------------------------------------------------------------
