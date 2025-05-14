@@ -261,9 +261,21 @@ def get_dutch_date():
 
 system_prompt = f"{base_system_prompt}\n\nDatum: {get_dutch_date()}"
 
+raw_agent_model = os.getenv("AGENT_MODEL", "gpt-4o")
+openai_base_url = os.getenv("OPENAI_BASE_URL", "")
+processed_agent_model = raw_agent_model
+
+# Check if using Together AI and the model name from AGENT_MODEL needs prefixing
+if "api.together.xyz" in openai_base_url and "/" in raw_agent_model and ":" not in raw_agent_model:
+    # If OPENAI_BASE_URL points to Together AI, and AGENT_MODEL looks like "Creator/ModelName"
+    # (e.g., "Qwen/Qwen3-235B-A22B-fp8-tput") and doesn't already have a prefix,
+    # prepend "openai:" to make it compatible with the OpenAI Agents SDK's prefix parsing.
+    print(f"INFO: Modifying AGENT_MODEL for Together AI. Original: '{raw_agent_model}', Processed: 'openai:{raw_agent_model}'")
+    processed_agent_model = f"openai:{raw_agent_model}"
+
 _agent = Agent(
     name="SlackAssistant",
-    model=os.getenv("AGENT_MODEL", "gpt-4o"),
+    model=processed_agent_model,  # Use the potentially modified model name
     instructions=system_prompt,
     mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],  # Added eu2_make_mcp_server back
 )
