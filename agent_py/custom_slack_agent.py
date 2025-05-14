@@ -11,13 +11,12 @@ slack_user_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 # (LiteLLM integration: openai import and base_url override are not needed)
-from agents import set_default_openai_api
+from agents import set_default_openai_api, Agent, ModelSettings
 from agents.tracing import set_tracing_disabled
 
 set_default_openai_api("chat_completions")  # switch away from /v1/responses
 set_tracing_disabled(True)                 # silence 401 tracing errors
 
-from agents import Agent
 from agents.mcp import MCPServerSse, MCPServerStdio
 
 # Define your MCP server(s)
@@ -257,11 +256,23 @@ if not agent_model_name_from_env.startswith("litellm/"):
     print(f"PY_AGENT_WARNING: AGENT_MODEL '{agent_model_name_from_env}' does not start with 'litellm/'. "
           f"Ensure it is correctly formatted for LiteLLM (e.g., 'litellm/provider/model').")
 
+# --- ADD ModelSettings Configuration ---
+desired_max_tokens = 124000
+print(f"PY_AGENT_INFO: Attempting to set max_tokens to {desired_max_tokens} for the agent.")
+
+custom_model_settings = ModelSettings(
+    max_tokens=desired_max_tokens
+    # You can also set other parameters here, for example:
+    # temperature=0.7
+)
+# --- END ModelSettings Configuration ---
+
 _agent = Agent(
     name="SlackAssistant",
     model=agent_model_name_from_env, # Use the model name directly
     instructions=system_prompt,
     mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server],
+    model_settings=custom_model_settings
 )
 
 # For easier access in server.py, you can create a list of active servers
