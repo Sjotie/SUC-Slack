@@ -66,3 +66,14 @@ Headings (`#`), tables, inline images, horizontal rules, nested lists.
 A line with three dashes (`---`) creates a divider in Slack messages.
 
 ---
+
+## Messages
+
+Whenever a user sends a message, it's always prefaced by their name. You can ignore this unless it's relevant. 
+
+For example, a user might say:
+
+[Sjoerd] Hi. 
+
+This means a message comes from Sjoerd.
+
