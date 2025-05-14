@@ -163,8 +163,26 @@ async function processMessageAndGenerateResponse(
         // 2. Initialize context (fetch history etc.)
         await conversationUtils.initializeContextFromHistory(app, threadInfo, currentBotUserIdForHistory);
         const conversationHistory = conversationUtils.getThreadHistory(threadInfo);
-        // Store the message WITHOUT the prepended username in context/history
-        conversationUtils.addUserMessageToThread(threadInfo, messageTextOrContent);
+
+        // Prevent duplicating the user message: add it only if it is
+        // *not* already the last entry in history.
+        const lastMsg = conversationHistory[conversationHistory.length - 1];
+        const alreadyPresent =
+            lastMsg &&
+            lastMsg.role === 'user' &&
+            (
+                (typeof lastMsg.content === 'string' &&
+                 typeof messageTextOrContent === 'string' &&
+                 lastMsg.content === messageTextOrContent) ||
+                (Array.isArray(messageTextOrContent) &&
+                 Array.isArray(lastMsg.content) &&
+                 JSON.stringify(lastMsg.content) === JSON.stringify(messageTextOrContent))
+            );
+
+        if (!alreadyPresent) {
+            // Store the message WITHOUT the prepended username in context/history
+            conversationUtils.addUserMessageToThread(threadInfo, messageTextOrContent);
+        }
 
         // --- MODIFICATION START: Prepare prompt specifically for the AI ---
         let promptForAI: string | MessageContent[];
