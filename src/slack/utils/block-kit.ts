@@ -8,6 +8,35 @@
 import { logger, logEmoji } from '../../utils/logger';
 
 /**
+ * Convert Markdown to Slack mrkdwn.
+ * Handles:
+ *   - Fenced code blocks: ```lang\ncode\n``` -> ```\ncode\n```
+ *   - Bold: **text** -> *text*
+ *   - Horizontal rules: --- (on its own line) -> %%%SLACK_DIVIDER%%%
+ *   - (Italics: minimal, see notes)
+ */
+function convertMarkdownToSlackMrkdwn(markdownText: string): string {
+    if (!markdownText) return "";
+    let slackText = markdownText;
+
+    // 1. Fenced Code Blocks: ```lang\ncode\n``` -> ```\ncode\n```
+    slackText = slackText.replace(/```(\w*)\s*\n([\s\S]+?)\s*\n```/g, (match, lang, code) => {
+        return '```\n' + code.trim() + '\n```';
+    });
+
+    // 2. Bold: **text** -> *text*
+    slackText = slackText.replace(/\*\*(.+?)\*\*/g, '*$1*');
+
+    // 3. Horizontal Rule: --- (on its own line) -> %%%SLACK_DIVIDER%%%
+    slackText = slackText.replace(/^[\t ]*---[\t ]*$/gm, '%%%SLACK_DIVIDER%%%');
+
+    // 4. (Italics: minimal, see notes in implementation)
+    // If you want to handle _italic_ or *italic* to Slack's _italic_, add here.
+
+    return slackText;
+}
+
+/**
  * Block types
  */
 export enum BlockType {
@@ -531,7 +560,7 @@ export function aiResponseMessage(
     const finalContentBlocks: Block[] = [];
 
     if (safeContent === '(no content)') {
-        finalContentBlocks.push(section('(no content)'));
+        finalContentBlocks.push(section(plainText('(no content)')));
     } else {
         let remainingContentToProcess = safeContent;
         const thinkStartTag = "<think>";
@@ -543,86 +572,108 @@ export function aiResponseMessage(
 
             // Scenario 1: We are actively streaming an open think block
             if (isStreamingOpenThinkBlock && lastOpenThinkPos !== -1 && (lastCloseThinkPos === -1 || lastOpenThinkPos > lastCloseThinkPos)) {
-                const textBeforeOpenThink = remainingContentToProcess.substring(0, lastOpenThinkPos);
-                const openThinkContent = remainingContentToProcess.substring(lastOpenThinkPos + thinkStartTag.length);
-
-                // Process text before the currently open think block (if any)
-                if (textBeforeOpenThink.trim()) {
-                    for (const chunk of splitTextIntoSections(textBeforeOpenThink.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
-                        if (chunk.trim() === '---') finalContentBlocks.push(divider());
-                        else if (chunk.trim()) finalContentBlocks.push(section(chunk));
-                    }
+                // --- Streaming an Open Think Block ---
+                const textBeforeOpenThinkRaw = remainingContentToProcess.substring(0, lastOpenThinkPos);
+                let openThinkContentRaw = remainingContentToProcess.substring(lastOpenThinkPos + thinkStartTag.length);
+                
+                // Convert Markdown in the text *before* the think block
+                if (textBeforeOpenThinkRaw.trim()) {
+                    const convertedTextBefore = convertMarkdownToSlackMrkdwn(textBeforeOpenThinkRaw.trim());
+                    const segmentsBefore = convertedTextBefore.split('%%%SLACK_DIVIDER%%%');
+                    segmentsBefore.forEach((seg, index) => {
+                        if (seg.trim()) {
+                            for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
+                                if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                            }
+                        }
+                        if (index < segmentsBefore.length - 1) finalContentBlocks.push(divider());
+                    });
                 }
 
-                // Process the open think block content
-                const truncatedThinkContent = openThinkContent.length > MAX_CHARS_PER_THINK_BLOCK
-                    ? openThinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
-                    : openThinkContent;
+                // Think content itself is typically pre-formatted or plain, usually not needing heavy md conversion for display in ```
+                // However, if it CAN contain markdown that needs conversion before being wrapped in ```:
+                // openThinkContentRaw = convertMarkdownToSlackMrkdwn(openThinkContentRaw); 
+                const truncatedThinkContent = openThinkContentRaw.length > MAX_CHARS_PER_THINK_BLOCK
+                    ? openThinkContentRaw.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                    : openThinkContentRaw;
                 finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
+                
                 remainingContentToProcess = ""; // Consumed all for this special streaming case
                 break; 
             }
 
-            // Scenario 2: Normal processing (not specifically streaming an open think block, or it's the final call)
-            // Use the regex for segmentation.
+            // --- Normal Processing or Final Call (Segments Content) ---
+            let textToProcessThisIteration = remainingContentToProcess;
+            remainingContentToProcess = ""; 
+
             const segmentRegex = /(<think>[\s\S]*?<\/think>)|([\s\S]+?(?=<think>|$))/g;
             let match;
-            let lastProcessedIndex = 0;
-            
-            // Create a temporary string to apply the regex on, to avoid issues with global regex state if called multiple times.
-            let tempStringToSegment = remainingContentToProcess;
-            remainingContentToProcess = ""; // Assume we process it all now.
+            let lastProcessedIdxInIter = 0;
 
-            while ((match = segmentRegex.exec(tempStringToSegment)) !== null) {
-                lastProcessedIndex = match.index + match[0].length;
+            while ((match = segmentRegex.exec(textToProcessThisIteration)) !== null) {
+                lastProcessedIdxInIter = match.index + match[0].length;
                 const thinkSegmentWithTags = match[1];
-                const regularSegment = match[2];
+                const regularSegmentRaw = match[2];
 
                 if (thinkSegmentWithTags) {
-                    const thinkContent = thinkSegmentWithTags.substring(thinkStartTag.length, thinkSegmentWithTags.length - thinkEndTag.length).trim();
-                    if (thinkContent) {
-                        const truncatedThinkContent = thinkContent.length > MAX_CHARS_PER_THINK_BLOCK
-                            ? thinkContent.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
-                            : thinkContent;
+                    let thinkContentRaw = thinkSegmentWithTags.substring(thinkStartTag.length, thinkSegmentWithTags.length - thinkEndTag.length).trim();
+                    if (thinkContentRaw) {
+                        // thinkContentRaw = convertMarkdownToSlackMrkdwn(thinkContentRaw); // Optional: if think content needs conversion
+                        const truncatedThinkContent = thinkContentRaw.length > MAX_CHARS_PER_THINK_BLOCK
+                            ? thinkContentRaw.substring(0, MAX_CHARS_PER_THINK_BLOCK) + "..."
+                            : thinkContentRaw;
                         finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
                     }
-                } else if (regularSegment) {
-                    const trimmedRegularSegment = regularSegment.trim();
+                } else if (regularSegmentRaw) {
+                    let trimmedRegularSegment = regularSegmentRaw.trim();
                     if (trimmedRegularSegment) {
-                        for (const chunk of splitTextIntoSections(trimmedRegularSegment, MAX_CHARS_PER_REGULAR_BLOCK)) {
-                            if (chunk.trim() === '---') finalContentBlocks.push(divider());
-                            else if (chunk.trim()) finalContentBlocks.push(section(chunk));
+                        const convertedRegularSegment = convertMarkdownToSlackMrkdwn(trimmedRegularSegment);
+                        const segments = convertedRegularSegment.split('%%%SLACK_DIVIDER%%%');
+                        segments.forEach((seg, index) => {
+                            if (seg.trim()) {
+                                for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
+                                    if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                                }
+                            }
+                            if (index < segments.length - 1) {
+                                finalContentBlocks.push(divider());
+                            }
+                        });
+                    }
+                }
+            }
+            // Process any leftover if regex didn't consume all
+            if (lastProcessedIdxInIter < textToProcessThisIteration.length) {
+                let restRaw = textToProcessThisIteration.substring(lastProcessedIdxInIter).trim();
+                if (restRaw) {
+                    const convertedRest = convertMarkdownToSlackMrkdwn(restRaw);
+                    const segmentsRest = convertedRest.split('%%%SLACK_DIVIDER%%%');
+                    segmentsRest.forEach((seg, index) => {
+                        if (seg.trim()) {
+                            for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
+                                if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                            }
                         }
-                    }
+                        if (index < segmentsRest.length - 1) finalContentBlocks.push(divider());
+                    });
                 }
             }
-            // If regex didn't consume the whole tempStringToSegment (e.g. if it's empty or only partial match)
-            // this path should ideally not be hit if regex is exhaustive for non-empty strings.
-            if (lastProcessedIndex < tempStringToSegment.length) {
-                const rest = tempStringToSegment.substring(lastProcessedIndex).trim();
-                if (rest) {
-                    for (const chunk of splitTextIntoSections(rest, MAX_CHARS_PER_REGULAR_BLOCK)) {
-                        if (chunk.trim()) finalContentBlocks.push(section(chunk));
-                    }
-                }
-            }
-        }
+        } 
     }
 
     const blocks: Block[] = [...finalContentBlocks];
 
-    // Add function results and metadata (typically for the final message)
     if (!isStreamingOpenThinkBlock) {
         if (functionResults && functionResults.length > 0) {
             blocks.push(divider());
             for (const result of functionResults) {
-                const pretty = `\`\`\`\n${result}\n\`\`\``;
+                // Function results are typically pre-formatted or code-like
+                const pretty = `\`\`\`\n${result}\n\`\`\``; 
                 for (const chunk of splitTextIntoSections(pretty, MAX_CHARS_PER_REGULAR_BLOCK)) {
-                    if (chunk.trim()) blocks.push(section(chunk));
+                    if (chunk.trim()) blocks.push(section(mrkdwn(chunk)));
                 }
             }
         }
-
         if (metadata && Object.keys(metadata).length > 0) {
             blocks.push(divider());
             const metadataElements: Text[] = [];
@@ -631,7 +682,8 @@ export function aiResponseMessage(
         }
     }
     
-    const fallbackText = safeContent.substring(0, 150) + (safeContent.length > 150 ? '...' : '');
+    // Fallback text should also be converted for consistency, though it's short
+    const fallbackText = convertMarkdownToSlackMrkdwn(safeContent.substring(0, 200)).substring(0,150) + (safeContent.length > 150 ? '...' : '');
 
     return {
         blocks: blocks.length > 0 ? blocks : [section(mrkdwn(fallbackText || '(empty response)'))],
