@@ -283,7 +283,7 @@ export async function sendAIResponse(
 ): Promise<string> {
     try {
         // Create the message
-        const message = blockKit.aiResponseMessage(content, metadata, functionResults);
+        const message = blockKit.aiResponseMessage(content, false, metadata, functionResults);
 
         // Send the message
         const result = await app.client.chat.postMessage({
@@ -325,7 +325,7 @@ export async function updateThinkingMessageWithAIResponse(
 ) {
     try {
         // Create the message
-        const message = blockKit.aiResponseMessage(content, metadata, functionResults);
+        const message = blockKit.aiResponseMessage(content, false, metadata, functionResults);
 
         // Update the message
         const result = await updateMessage(
