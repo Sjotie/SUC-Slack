@@ -105,170 +105,139 @@ async function processMessageAndGenerateResponse(
     messageTextOrContent: string | MessageContent[],
     client: any
 ): Promise<void> {
-    // Attach the Slack user ID to the threadInfo for downstream use
-    (threadInfo as any).__slackUserId = threadInfo.userId;
+    (threadInfo as any).__slackUserId = threadInfo.userId; // For Python agent
+
     let thinkingMessageTs: string | undefined;
-    let lastMessageTs: string | undefined;
-    let toolMessageTs: string | undefined;
+    let lastMessageTs: string | undefined; // TS of the current Slack message being updated by LLM
+    let toolMessageTs: string | undefined; // TS of the "tool X is running" message
     let currentToolName: string | undefined;
     let finalMetadata: Record<string, any> | undefined;
 
-    // Use a single buffer for the raw response from the LLM
-    let rawResponseBuffer = '';
-
+    let rawResponseBuffer = ''; // Accumulates raw LLM text for the current segment
+    
     // --- Streaming flush control constants and state ---
-    const MIN_FLUSH_LEN_REGULAR = 250;  // Increased: e.g., target ~2-3 sentences
-    const MIN_FLUSH_LEN_THINK = 400;    // Increased: target larger updates for think blocks
-    const SENTENCE_END_RE = /[.!?]\s|[.\n]\n/;
-    const MIN_SENTENCES_THINK = 2;      // Keep this for think blocks
-
+    const MIN_FLUSH_LEN_REGULAR = 250; 
+    const MIN_FLUSH_LEN_THINK = 350; // Slightly larger for think blocks if desired
+    const SENTENCE_END_RE = /[.!?]\s|[.\n]\n/; // Existing
+    const MIN_SENTENCES_THINK = 1; // Update think block after 1-2 sentences for better feel
+    
     let lastUpdateTime = 0;
-    const MIN_UPDATE_INTERVAL_MS = 1500; // Increased: e.g., 1.5 seconds
+    const MIN_UPDATE_INTERVAL_MS = 1200; // Increased further: 1.2 seconds
 
-    // New state variable to track new content since last flush
-    let contentAccumulatedSinceLastFlush = "";
+    // Tracks new characters *since the last successful Slack update for the current segment*
+    let charsSinceLastFlushInSegment = 0; 
 
     try {
+        // 0. Ensure Bot User ID is available
         if (!botUserId) {
             try {
                 logger.info(`${logEmoji.slack} Bot user ID not initialized, fetching...`);
                 const authInfo = await client.auth.test();
                 botUserId = authInfo.user_id;
-                if (!botUserId) {
-                    throw new Error('Failed to get bot user ID from auth.test');
-                }
+                if (!botUserId) throw new Error('Failed to get bot user ID from auth.test');
                 logger.info(`${logEmoji.slack} Bot user ID initialized: ${botUserId}`);
             } catch (authError) {
-                logger.error(`${logEmoji.error} CRITICAL: Could not determine bot user ID. Cannot process message.`, { authError });
-                await conversationUtils.sendErrorMessage(
-                    app,
-                    threadInfo,
-                    'Bot Initialization Error',
-                    'Sorry, I could not retrieve my own user ID. Please notify an administrator.'
-                );
+                logger.error(`${logEmoji.error} CRITICAL: Bot ID error.`, { authError });
+                // User-facing error in Slack
+                await conversationUtils.sendErrorMessage(app, threadInfo, 'Bot Error', 'Initialization failed.');
                 return;
             }
         }
-        const currentBotUserIdForHistory = botUserId;
-
-        // Fetch username for the current message
-        const userName = await getUserName(threadInfo.userId || '', client);
+        const currentBotUserIdForHistory = botUserId; // Safe to use now
 
         // 1. Send initial "Thinking..." message
-        const thinkingMessage = await client.chat.postMessage({
+        const thinkingMsgResponse = await client.chat.postMessage({
             channel: threadInfo.channelId,
             thread_ts: threadInfo.threadTs,
             ...blockKit.loadingMessage('Thinking...')
         });
-        thinkingMessageTs = thinkingMessage.ts as string;
-        lastMessageTs = thinkingMessageTs;
-        logger.debug(`${logEmoji.slack} Sent thinking message ${thinkingMessageTs} to thread ${threadInfo.threadTs}`);
+        thinkingMessageTs = thinkingMsgResponse.ts as string;
+        lastMessageTs = thinkingMessageTs; // Initial updates go to the "Thinking..." message
+        logger.debug(`${logEmoji.slack} Sent thinking message ${thinkingMessageTs}`);
 
-        // 2. Initialize context (fetch history etc.)
+        // 2. Initialize context and prepare prompt for AI
+        const userName = await getUserName(threadInfo.userId || '', client);
         await conversationUtils.initializeContextFromHistory(app, threadInfo, currentBotUserIdForHistory);
         const conversationHistory = conversationUtils.getThreadHistory(threadInfo);
-
-        // Prevent duplicating the user message: add it only if it is
-        // *not* already the last entry in history.
-        const lastMsg = conversationHistory[conversationHistory.length - 1];
-        const alreadyPresent =
-            lastMsg &&
-            lastMsg.role === 'user' &&
-            (
-                (typeof lastMsg.content === 'string' &&
-                 typeof messageTextOrContent === 'string' &&
-                 lastMsg.content === messageTextOrContent) ||
-                (Array.isArray(messageTextOrContent) &&
-                 Array.isArray(lastMsg.content) &&
-                 JSON.stringify(lastMsg.content) === JSON.stringify(messageTextOrContent))
-            );
-
-        if (!alreadyPresent) {
+        
+        // Add user message to history (if not already there from context init)
+        const lastHistoryMessage = conversationHistory[conversationHistory.length -1];
+        const isDuplicateUserMessage = lastHistoryMessage && lastHistoryMessage.role === 'user' && 
+                                     JSON.stringify(lastHistoryMessage.content) === JSON.stringify(messageTextOrContent);
+        if (!isDuplicateUserMessage) {
             conversationUtils.addUserMessageToThread(threadInfo, messageTextOrContent);
         }
-
-        // --- Prepare prompt for AI ---
+        
         let promptForAI: string | MessageContent[];
-
         if (typeof messageTextOrContent === 'string') {
             promptForAI = `[${userName}] ${messageTextOrContent}`;
-        } else {
-            promptForAI = messageTextOrContent.map((part, index) => {
-                if (part.type === 'input_text' && index === messageTextOrContent.findIndex(p => p.type === 'input_text')) {
-                    return {
-                        ...part,
-                        text: `[${userName}] ${part.text}`
-                    };
-                }
-                return part;
-            });
+        } else { // Multimodal
+            promptForAI = messageTextOrContent.map((part, index) => 
+                (part.type === 'input_text' && index === messageTextOrContent.findIndex(p => p.type === 'input_text'))
+                    ? { ...part, text: `[${userName}] ${part.text}` }
+                    : part
+            );
         }
+        logger.debug(`${logEmoji.ai} Prepared prompt for AI. History length: ${conversationHistory.length}`);
 
+        // 3. Call AI Stream
         const eventStream = aiClient.generateResponseStream(
-            promptForAI,
-            conversationHistory,
-            undefined,
-            undefined,
+            promptForAI, conversationHistory, undefined, undefined,
             { slackUserId: (threadInfo as any).__slackUserId }
         );
 
+        // 4. Process stream events
         for await (const event of eventStream) {
-            logger.debug(`${logEmoji.ai} Received agent event: ${event.type}`);
+            logger.debug(`${logEmoji.ai} Agent event: ${event.type}`);
 
             switch (event.type) {
                 case 'llm_chunk':
                     if (typeof event.data === 'string' && event.data) {
                         rawResponseBuffer += event.data;
-                        contentAccumulatedSinceLastFlush += event.data; // Track new content
+                        charsSinceLastFlushInSegment += event.data.length;
 
-                        if (lastMessageTs) { // Only update if a message exists
+                        if (lastMessageTs) { // Guard: Only update if there's a message to update
                             const currentTime = Date.now();
-                            const isCurrentlyMidThink = rawResponseBuffer.includes("<think>") &&
-                                                     (!rawResponseBuffer.includes("</think>") ||
-                                                      rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
+                            const isMidThink = rawResponseBuffer.includes("<think>") &&
+                                             (!rawResponseBuffer.includes("</think>") ||
+                                              rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
                             
                             let shouldUpdateSlack = false;
+                            const activeContentForCheck = charsSinceLastFlushInSegment; // Check length of *new* content
 
                             if (currentTime - lastUpdateTime >= MIN_UPDATE_INTERVAL_MS) {
-                                if (isCurrentlyMidThink) {
-                                    // For think blocks: update if substantial new content accumulated
-                                    const sentencesInNewThinkContent = (contentAccumulatedSinceLastFlush.match(SENTENCE_END_RE) || []).length;
-                                    if (contentAccumulatedSinceLastFlush.length >= MIN_FLUSH_LEN_THINK || sentencesInNewThinkContent >= MIN_SENTENCES_THINK ) {
+                                if (isMidThink) {
+                                    const currentThinkText = rawResponseBuffer.substring(rawResponseBuffer.lastIndexOf("<think>"));
+                                    const sentencesInThink = (currentThinkText.match(SENTENCE_END_RE) || []).length;
+                                    if (activeContentForCheck >= MIN_FLUSH_LEN_THINK || sentencesInThink >= MIN_SENTENCES_THINK) {
                                         shouldUpdateSlack = true;
                                     }
-                                } else {
-                                    // For regular content: update if sentence end AND substantial new content
-                                    if (SENTENCE_END_RE.test(contentAccumulatedSinceLastFlush) && // Check new content for sentence end
-                                        contentAccumulatedSinceLastFlush.length >= MIN_FLUSH_LEN_REGULAR) {
+                                } else { // Regular content
+                                    const segmentToCheckForSentenceEnd = rawResponseBuffer.substring(rawResponseBuffer.lastIndexOf("</think>") + "</think>".length);
+                                    if (activeContentForCheck >= MIN_FLUSH_LEN_REGULAR && SENTENCE_END_RE.test(segmentToCheckForSentenceEnd)) {
                                         shouldUpdateSlack = true;
                                     }
                                 }
                             }
-                            
-                            // Override: Always update if a think block just closed
-                            // Check if the *newly added data specifically* closes a think block
-                            // and the overall buffer now reflects that.
-                            if (event.data.includes("</think>") && !isCurrentlyMidThink) { 
+                            // Always update if a think block just closed
+                            if (event.data.includes("</think>") && !isMidThink && rawResponseBuffer.lastIndexOf("</think>") + "</think>".length <= rawResponseBuffer.length ) {
                                 shouldUpdateSlack = true;
                             }
-
-                            // Override: Safety net - update if the total buffer is very large
-                            if (rawResponseBuffer.length > 2800) {
-                                shouldUpdateSlack = true;
-                            }
+                            // Safety net
+                            if (rawResponseBuffer.length > 2800) shouldUpdateSlack = true;
 
                             if (shouldUpdateSlack) {
-                                const msgPayload = blockKit.aiResponseMessage(rawResponseBuffer, isCurrentlyMidThink);
+                                const msgPayload = blockKit.aiResponseMessage(rawResponseBuffer, isMidThink);
                                 try {
                                     await conversationUtils.updateMessage(
                                         app, threadInfo.channelId, lastMessageTs,
                                         msgPayload.blocks as any[], msgPayload.text
                                     );
                                     lastUpdateTime = Date.now();
-                                    contentAccumulatedSinceLastFlush = ""; // Reset after successful flush
-                                    logger.debug(`${logEmoji.slack} Stream update to ${lastMessageTs}. Mid-think: ${isCurrentlyMidThink}. TotalLen: ${rawResponseBuffer.length}`);
+                                    charsSinceLastFlushInSegment = 0; // Reset counter for new content
+                                    logger.debug(`${logEmoji.slack} Stream update to ${lastMessageTs}. Mid-think: ${isMidThink}. TotalLen: ${rawResponseBuffer.length}`);
                                 } catch (updateError: any) {
-                                    logger.warn(`${logEmoji.warning} Slack update error: ${updateError.message}`, { code: updateError.code });
+                                    logger.warn(`${logEmoji.warning} Slack update error (llm_chunk): ${updateError.message}`, { code: updateError.code });
                                 }
                             }
                         }
@@ -277,144 +246,151 @@ async function processMessageAndGenerateResponse(
 
                 case 'tool_call':
                 case 'tool_calls': {
-                    // Before processing tool call, flush any pending rawResponseBuffer
+                    // 1. Flush any preceding text from rawResponseBuffer
                     if (rawResponseBuffer.trim() && lastMessageTs) {
-                        // Determine if the content being flushed is part of an open think block
-                        const isMidThinkFinalBeforeTool = rawResponseBuffer.includes("<think>") && 
-                                                         (!rawResponseBuffer.includes("</think>") || 
-                                                          rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
-                        const finalPreToolPayload = blockKit.aiResponseMessage(rawResponseBuffer, isMidThinkFinalBeforeTool);
-                        await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, finalPreToolPayload.blocks as any[], finalPreToolPayload.text);
+                        const isMidThinkPreTool = rawResponseBuffer.includes("<think>") && (!rawResponseBuffer.includes("</think>") || rawResponseBuffer.lastIndexOf("<think>") > rawResponseBuffer.lastIndexOf("</think>"));
+                        const preToolPayload = blockKit.aiResponseMessage(rawResponseBuffer, isMidThinkPreTool);
+                        await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, preToolPayload.blocks as any[], preToolPayload.text);
                         if(rawResponseBuffer.trim()){
-                           conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
+                           conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer); // Add raw to history
                         }
                         lastUpdateTime = Date.now();
                     }
-                    rawResponseBuffer = ''; 
-                    contentAccumulatedSinceLastFlush = ''; // Reset for content after tool call
+                    // 2. Reset buffers for the tool interaction phase
+                    rawResponseBuffer = '';
+                    charsSinceLastFlushInSegment = 0;
 
+                    // 3. Post "Tool X is running..." message
                     let toolName: string | undefined;
                     let argPreview: string = '';
-                    if (event.type === 'tool_calls' && Array.isArray(event.data)) {
-                        const firstCall = event.data[0]?.function;
-                        toolName = firstCall?.name || event.data[0]?.name || 'tool';
+                    if (event.type === 'tool_calls' && Array.isArray(event.data) && event.data.length > 0) {
+                        const firstCall = event.data[0]?.function || event.data[0];
+                        toolName = firstCall?.name;
                         argPreview = firstCall?.arguments ? JSON.stringify(firstCall.arguments).slice(0, 80) : '';
-                    } else { 
-                        toolName = event.data?.tool_name || event.data?.name || 'tool';
-                        argPreview = event.data?.arguments ? JSON.stringify(event.data.arguments).slice(0, 80) : '';
+                    } else if (event.data) { // Single tool_call or non-array tool_calls
+                        toolName = event.data.tool_name || event.data.name;
+                        argPreview = event.data.arguments ? JSON.stringify(event.data.arguments).slice(0, 80) : '';
                     }
-                    currentToolName = toolName; // Ensure currentToolName is defined in this scope
+                    currentToolName = toolName || 'tool';
 
                     const toolMsgResponse = await client.chat.postMessage({
                         channel: threadInfo.channelId,
-                        thread_ts: threadInfo.threadTs,
-                        ...blockKit.functionCallMessage(toolName || 'tool', 'start', argPreview),
+                        thread_ts: threadInfo.threadTs, // Ensure it's in the same thread
+                        ...blockKit.functionCallMessage(currentToolName, 'start', argPreview),
                     });
                     toolMessageTs = toolMsgResponse.ts as string;
-                    lastMessageTs = toolMsgResponse.ts as string; 
-                    logger.info(`${logEmoji.slack} Posted tool usage message ${toolMessageTs} for ${toolName}`);
+                    lastMessageTs = toolMessageTs; // Updates will now go to the tool message (e.g., its result)
+                    logger.info(`${logEmoji.slack} Posted tool call start: ${toolMessageTs} for ${currentToolName}`);
                     break;
                 }
-
+                
                 case 'tool_result':
-                    if (toolMessageTs) {
-                        const toolResultData = event.data?.result ?? event.data;
+                    if (toolMessageTs) { // Should be true if a tool_call was just handled
+                        const toolResultData = event.data?.result ?? event.data; // Accommodate different structures
                         const resultSummary = typeof toolResultData === 'string'
-                            ? toolResultData.substring(0, 120) + (toolResultData.length > 120 ? "..." : "")
-                            : '[result data received]';
-
+                            ? toolResultData.substring(0, 250) + (toolResultData.length > 250 ? "..." : "") // Longer summary
+                            : '[structured tool result data]';
+                        
                         const messageUpdate = blockKit.functionCallMessage(
-                            currentToolName || event.data?.tool_name || 'tool',
-                            'end',
-                            resultSummary
+                            currentToolName || event.data?.tool_name || 'tool', 'end', resultSummary
                         );
                         await conversationUtils.updateMessage(
-                            app,
-                            threadInfo.channelId,
-                            toolMessageTs,
-                            messageUpdate.blocks as any[],
-                            messageUpdate.text
+                            app, threadInfo.channelId, toolMessageTs,
+                            messageUpdate.blocks as any[], messageUpdate.text
                         );
-                        logger.info(`${logEmoji.slack} Updated tool usage message ${toolMessageTs} with result.`);
-
+                        logger.info(`${logEmoji.slack} Updated tool message ${toolMessageTs} with result.`);
+                        
+                        // CRITICAL: After a tool result is displayed, the *next* LLM output should start a new message.
                         lastMessageTs = undefined; 
-                        rawResponseBuffer = ''; 
-                        contentAccumulatedSinceLastFlush = '';
-                        toolMessageTs = undefined; 
+                        toolMessageTs = undefined; // Clear since this tool interaction is complete
                         currentToolName = undefined;
+                        rawResponseBuffer = ''; // Reset for any new LLM output
+                        charsSinceLastFlushInSegment = 0;
+                    } else {
+                         logger.warn(`${logEmoji.warning} Received tool_result but toolMessageTs was undefined.`);
+                         // If there's content in rawResponseBuffer, it suggests LLM continued before tool result UI could be posted.
+                         // This case should ideally not happen if tool_call correctly sets up toolMessageTs.
+                         // We could try to post the result as a new message.
+                         const resultSummary = typeof event.data?.result === 'string' ? event.data.result.substring(0,100) : "[Tool Result]";
+                         await client.chat.postMessage({
+                            channel: threadInfo.channelId,
+                            thread_ts: threadInfo.threadTs,
+                            text: `Tool Result: ${resultSummary}`
+                         });
                     }
                     break;
 
                 case 'final_message':
-                    // ... (Your existing final_message logic to append to rawResponseBuffer and set finalMetadata) ...
-                    // Make sure to add to contentAccumulatedSinceLastFlush as well if this event might trigger a final stream update.
-                    const finalData = event.data;
-                    if (finalData && typeof finalData.content === 'string') {
-                        rawResponseBuffer += finalData.content;
-                        // contentAccumulatedSinceLastFlush += finalData.content; // Not strictly needed here as final update is unconditional
+                    if (event.data && typeof event.data.content === 'string') {
+                        rawResponseBuffer += event.data.content;
                     }
-                    if (finalData && finalData.metadata) {
-                        finalMetadata = finalData.metadata;
+                    if (event.data && event.data.metadata) {
+                        finalMetadata = event.data.metadata;
                     }
+                    // The final update/post happens after the loop.
                     break;
 
-                case 'error':
+                case 'error': // Centralized error handling
                     logger.error(`${logEmoji.error} Agent stream error:`, event.data);
-                    const errorMsgContent = String(event.data?.message || event.data || "Unknown agent error");
-                    if (lastMessageTs) {
-                        const errorBlocks = blockKit.errorMessage('Agent Error', 'An error occurred with the AI agent.', errorMsgContent);
-                        await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
-                    } else if (thinkingMessageTs) {
-                        const errorBlocks = blockKit.errorMessage('Agent Error', 'An error occurred with the AI agent.', errorMsgContent);
-                        await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
+                    const errorContent = String(event.data?.message || event.data?.error || event.data || "Unknown agent error");
+                    const targetTs = lastMessageTs || thinkingMessageTs;
+                    if (targetTs) {
+                        const errorBlocks = blockKit.errorMessage('Agent Error', 'An AI agent error occurred.', errorContent);
+                        await conversationUtils.updateMessage(app, threadInfo.channelId, targetTs, errorBlocks.blocks as any[], errorBlocks.text);
                     } else {
-                        await conversationUtils.sendErrorMessage(app, threadInfo, 'Agent Stream Error', errorMsgContent);
+                        await conversationUtils.sendErrorMessage(app, threadInfo, 'Agent Stream Error', errorContent);
                     }
-                    return;
+                    return; // Stop processing
 
                 default:
-                    logger.warn(`${logEmoji.warning} Unknown agent event: ${event.type}`);
+                    logger.warn(`${logEmoji.warning} Unhandled agent event type: ${event.type}`);
             }
-        }
+        } // End of stream processing loop
 
-        logger.debug(`${logEmoji.ai} Final processing. Raw buffer length: ${rawResponseBuffer.length}`);
+        // --- Final Message Processing (after loop) ---
+        logger.debug(`${logEmoji.ai} Stream ended. Final raw buffer length: ${rawResponseBuffer.length}`);
         
-        if (lastMessageTs || (rawResponseBuffer.trim() || (finalMetadata && Object.keys(finalMetadata).length > 0))) {
-            const finalMsgPayload = blockKit.aiResponseMessage(rawResponseBuffer, false, finalMetadata); // isStreamingOpenThinkBlock = false
+        const targetTsForFinal = lastMessageTs || thinkingMessageTs; // Prefer active message, fallback to initial thinking
+        
+        if (rawResponseBuffer.trim() || (finalMetadata && Object.keys(finalMetadata).length > 0)) {
+            // isStreamingOpenThinkBlock is false for the final formatting pass
+            const finalMsgPayload = blockKit.aiResponseMessage(rawResponseBuffer, false, finalMetadata);
 
-            const targetTsForFinalUpdate = lastMessageTs || thinkingMessageTs;
-
-            if (targetTsForFinalUpdate) {
-                logger.info(`${logEmoji.slack} Updating message ${targetTsForFinalUpdate} with final content.`);
-                await conversationUtils.updateMessage(app, threadInfo.channelId, targetTsForFinalUpdate, finalMsgPayload.blocks as any[], finalMsgPayload.text);
-                if (!lastMessageTs) lastMessageTs = targetTsForFinalUpdate; // Ensure lastMessageTs is set if we updated thinkingMessageTs
-            } else { 
-                logger.info(`${logEmoji.slack} Posting new final message.`);
+            if (targetTsForFinal) {
+                logger.info(`${logEmoji.slack} Final update to message ${targetTsForFinal}.`);
+                await conversationUtils.updateMessage(app, threadInfo.channelId, targetTsForFinal, finalMsgPayload.blocks as any[], finalMsgPayload.text);
+                lastMessageTs = targetTsForFinal; // Ensure lastMessageTs points to the final message
+            } else { // This case should be rare if thinkingMessageTs was always set
+                logger.info(`${logEmoji.slack} Posting new final message (no prior TS).`);
                 const res = await client.chat.postMessage({
-                    channel: threadInfo.channelId, thread_ts: threadInfo.threadTs,
-                    ...finalMsgPayload,
+                    channel: threadInfo.channelId, thread_ts: threadInfo.threadTs, ...finalMsgPayload,
                 });
                 lastMessageTs = res.ts as string;
             }
-            if(rawResponseBuffer.trim()){
+            if (rawResponseBuffer.trim()) { // Add to history only if there's actual content
                 conversationUtils.addAssistantMessageToThread(threadInfo, rawResponseBuffer);
             }
+        } else if (targetTsForFinal && !toolMessageTs) { // No new content, but initial thinking message exists and no tool took over
+             logger.info(`${logEmoji.slack} No new content. Updating message ${targetTsForFinal} to clear 'Thinking...'.`);
+             const noNewContentPayload = blockKit.aiResponseMessage("(No further response from AI)", false, finalMetadata);
+             await conversationUtils.updateMessage(app, threadInfo.channelId, targetTsForFinal, noNewContentPayload.blocks as any[], noNewContentPayload.text);
         }
 
     } catch (error: any) {
-        logger.error(`${logEmoji.error} Error in processMessageAndGenerateResponse`, { errorMessage: error.message, stack: error.stack });
-        const errorTitle = 'Error Processing Request';
-        const errorDetail = error.message || 'An unexpected error occurred.';
-        if (thinkingMessageTs) {
+        logger.error(`${logEmoji.error} Critical error in processMessageAndGenerateResponse`, { errorMsg: error.message, stack: error.stack, details: error });
+        const errorTitle = 'Bot Processing Error';
+        const errorDetailText = error.message || 'An unexpected error occurred during processing.';
+        const targetTsForError = lastMessageTs || thinkingMessageTs;
+        if (targetTsForError) {
             try {
-                const errorBlocks = blockKit.errorMessage(errorTitle, 'An error occurred while generating the response.', errorDetail);
-                await conversationUtils.updateMessage(app, threadInfo.channelId, thinkingMessageTs, errorBlocks.blocks as any[], errorBlocks.text);
+                const errorBlocks = blockKit.errorMessage(errorTitle, 'I encountered a problem.', errorDetailText);
+                await conversationUtils.updateMessage(app, threadInfo.channelId, targetTsForError, errorBlocks.blocks as any[], errorBlocks.text);
             } catch (updateError) {
-                logger.error(`${logEmoji.error} Failed to update thinking message with error`, { updateError });
-                await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetail);
+                logger.error(`${logEmoji.error} Failed to update message with critical error`, { updateError });
+                await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetailText);
             }
         } else {
-            await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetail);
+            await conversationUtils.sendErrorMessage(app, threadInfo, errorTitle, errorDetailText);
         }
     }
 }
