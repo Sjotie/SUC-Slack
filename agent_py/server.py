@@ -430,38 +430,38 @@ async def generate_stream(req: ChatRequest, request: Request):
         print(f"PY_AGENT_DEBUG (/generate): Slack user ID received: {req.slackUserId}")
 
 
+    # --- Clean and prepare messages for the agent in a single pass ---
     cleaned_messages = []
+    last_user_content = None
+
+    # 1. Add all valid history messages, skipping system messages and consecutive duplicate user messages
     for hist_msg in req.history:
-        if isinstance(hist_msg, dict) and "role" in hist_msg and "content" in hist_msg:
-            # Skip system messages from history to ensure only the agent's system prompt is used
-            if hist_msg["role"] == "system":
-                print(f"PY_AGENT_DEBUG (/generate): Ignoring incoming system message from history: '{str(hist_msg.get('content', ''))[:100]}...'")
-                continue  # Do not include system messages from client history
-            cleaned_msg = {"role": hist_msg["role"], "content": hist_msg["content"]}
-            if hist_msg["role"] == "tool":
-                if "tool_call_id" in hist_msg:
-                    cleaned_msg["tool_call_id"] = hist_msg["tool_call_id"]
-                if "name" in hist_msg:
-                    cleaned_msg["name"] = hist_msg["name"]
-            elif hist_msg["role"] == "assistant" and "tool_calls" in hist_msg:
-                cleaned_msg["tool_calls"] = hist_msg["tool_calls"]
-            cleaned_messages.append(cleaned_msg)
+        if not (isinstance(hist_msg, dict) and "role" in hist_msg and "content" in hist_msg):
+            continue
+        if hist_msg["role"] == "system":
+            print(f"PY_AGENT_DEBUG (/generate): Ignoring incoming system message from history: '{str(hist_msg.get('content', ''))[:100]}...'")
+            continue
+        if hist_msg["role"] == "user":
+            if last_user_content == hist_msg["content"]:
+                print("PY_AGENT_DEBUG (/generate): Skipping consecutive duplicate user message in history.")
+                continue
+            last_user_content = hist_msg["content"]
+        cleaned_msg = {"role": hist_msg["role"], "content": hist_msg["content"]}
+        if hist_msg["role"] == "tool":
+            if "tool_call_id" in hist_msg:
+                cleaned_msg["tool_call_id"] = hist_msg["tool_call_id"]
+            if "name" in hist_msg:
+                cleaned_msg["name"] = hist_msg["name"]
+        elif hist_msg["role"] == "assistant" and "tool_calls" in hist_msg:
+            cleaned_msg["tool_calls"] = hist_msg["tool_calls"]
+        cleaned_messages.append(cleaned_msg)
 
-    # Remove duplicate consecutive user messages (with same content)
-    deduped_messages = []
-    for msg in cleaned_messages:
-        if not (deduped_messages and msg["role"] == "user" and deduped_messages[-1]["role"] == "user" and deduped_messages[-1]["content"] == msg["content"]):
-            deduped_messages.append(msg)
-
-    # Only append the prompt if it's not already the last user message
-    new_user_msg = {"role": "user", "content": req.prompt if isinstance(req.prompt, (str, list)) else str(req.prompt)}
-    last_msg = deduped_messages[-1] if deduped_messages else None
-    if not (last_msg and last_msg.get("role") == "user" and last_msg.get("content") == new_user_msg["content"]):
-        deduped_messages.append(new_user_msg)
+    # 2. Append the prompt as a user message only if it's not a duplicate of the last user message
+    prompt_content = req.prompt if isinstance(req.prompt, (str, list)) else str(req.prompt)
+    if not (cleaned_messages and cleaned_messages[-1]["role"] == "user" and cleaned_messages[-1]["content"] == prompt_content):
+        cleaned_messages.append({"role": "user", "content": prompt_content})
     else:
         print("PY_AGENT_DEBUG (/generate): Skipping duplicate user message at end of history.")
-
-    cleaned_messages = deduped_messages
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
