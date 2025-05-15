@@ -71,6 +71,12 @@ class ChatResponse(BaseModel):
 # (No longer manages connect/cleanup, only yields agent events)
 async def stream_agent_events(agent, messages, *, max_retries: int = 2):
     print(f"PY_AGENT_DEBUG (stream_agent_events): Starting agent stream. Number of messages: {len(messages)}")
+    if messages:
+        print(f"PY_AGENT_DEBUG (stream_agent_events): First message: {messages[0]}")
+        print(f"PY_AGENT_DEBUG (stream_agent_events): Last message: {messages[-1]}")
+    print("PY_AGENT_DEBUG (stream_agent_events): FULL MESSAGES SENT TO AGENT:")
+    for i, msg in enumerate(messages):
+        print(f"  [{i}] {msg}")
 
     # ------------------------------------------------------------------
     # Automatic retry loop for the well-known duplicated-tool-name bug
