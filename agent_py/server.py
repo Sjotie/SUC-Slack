@@ -446,14 +446,22 @@ async def generate_stream(req: ChatRequest, request: Request):
             elif hist_msg["role"] == "assistant" and "tool_calls" in hist_msg:
                 cleaned_msg["tool_calls"] = hist_msg["tool_calls"]
             cleaned_messages.append(cleaned_msg)
-    
+
+    # Remove duplicate consecutive user messages (with same content)
+    deduped_messages = []
+    for msg in cleaned_messages:
+        if not (deduped_messages and msg["role"] == "user" and deduped_messages[-1]["role"] == "user" and deduped_messages[-1]["content"] == msg["content"]):
+            deduped_messages.append(msg)
+
     # Only append the prompt if it's not already the last user message
     new_user_msg = {"role": "user", "content": req.prompt if isinstance(req.prompt, (str, list)) else str(req.prompt)}
-    last_msg = cleaned_messages[-1] if cleaned_messages else None
+    last_msg = deduped_messages[-1] if deduped_messages else None
     if not (last_msg and last_msg.get("role") == "user" and last_msg.get("content") == new_user_msg["content"]):
-        cleaned_messages.append(new_user_msg)
+        deduped_messages.append(new_user_msg)
     else:
         print("PY_AGENT_DEBUG (/generate): Skipping duplicate user message at end of history.")
+
+    cleaned_messages = deduped_messages
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
