@@ -10,6 +10,10 @@ import sys
 
 from custom_slack_agent import slack_user_id_var   # shared ContextVar
 
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
 # ------------------------------------------------------------------
 # Verhoog de standaard-limiet van 10 beurten in de Agents-SDK.
 # Stuur zelf `AGENT_MAX_TURNS` in je .env om dit dynamisch te zetten.
