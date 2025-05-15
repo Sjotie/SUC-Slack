@@ -441,13 +441,13 @@ async def generate_stream(req: ChatRequest, request: Request):
                 cleaned_msg["tool_calls"] = hist_msg["tool_calls"]
             cleaned_messages.append(cleaned_msg)
     
-    # Check type of req.prompt before appending
-    if isinstance(req.prompt, str) or isinstance(req.prompt, list):
-        cleaned_messages.append({"role": "user", "content": req.prompt})
+    # Only append the prompt if it's not already the last user message
+    new_user_msg = {"role": "user", "content": req.prompt if isinstance(req.prompt, (str, list)) else str(req.prompt)}
+    last_msg = cleaned_messages[-1] if cleaned_messages else None
+    if not (last_msg and last_msg.get("role") == "user" and last_msg.get("content") == new_user_msg["content"]):
+        cleaned_messages.append(new_user_msg)
     else:
-        # Fallback if req.prompt is neither string nor list (should not happen with Pydantic validation)
-        print(f"PY_AGENT_WARNING (/generate): req.prompt is of unexpected type: {type(req.prompt)}. Converting to string.")
-        cleaned_messages.append({"role": "user", "content": str(req.prompt)})
+        print("PY_AGENT_DEBUG (/generate): Skipping duplicate user message at end of history.")
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
