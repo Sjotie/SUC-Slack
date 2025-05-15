@@ -70,7 +70,7 @@ def get_dutch_date():
     jaar = now.year
     return f"{dag_vd_week.capitalize()} {dag} {maand} {jaar}"
 
-system_prompt = f"{base_system_prompt}\n\nVandaag is het {get_dutch_date()}"
+system_prompt = f"{base_system_prompt}\n\nde datum van vandaag is {get_dutch_date()}"
 
 agent_model_name_from_env = os.getenv("AGENT_MODEL", "gpt-4o") # Default to gpt-4o if not set
 
