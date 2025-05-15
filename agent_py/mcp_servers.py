@@ -2,7 +2,7 @@ import os
 from agents.mcp import MCPServerSse, MCPServerStdio
 
 import contextvars
-from agent_py.custom_slack_agent import slack_user_id_var
+from custom_slack_agent import slack_user_id_var
 
 # --- MCP Server Definitions ---
 
