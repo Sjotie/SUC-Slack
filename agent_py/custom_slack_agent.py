@@ -16,7 +16,7 @@ set_default_openai_api("chat_completions")  # switch away from /v1/responses
 set_tracing_disabled(True)                 # silence 401 tracing errors
 
 # Import MCP servers from the new module
-from agent_py.mcp_servers import (
+from .mcp_servers import (
     primary_railway_mcp_server,
     eu2_make_mcp_server,
     slack_mcp_server,
