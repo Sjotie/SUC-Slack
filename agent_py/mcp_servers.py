@@ -17,23 +17,33 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
     items_is_missing_or_invalid = "items" not in schema_part or not isinstance(items_value, dict)
     needs_items_patch = is_array_type and items_is_missing_or_invalid
 
-    current_param_name_from_path = path.split('.')[-1]
-    if current_param_name_from_path in ["sorts", "children", "title", "description"] and is_array_type:
-        print(f"DETAILED_INSPECT_TARGET: Path='{path}', Param='{current_param_name_from_path}', IsArray={is_array_type}")
-        print(f"DETAILED_INSPECT_TARGET: Current schema_part for '{current_param_name_from_path}': {json.dumps(schema_part, indent=2)}")
-        print(f"DETAILED_INSPECT_TARGET: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
-        print(f"DETAILED_INSPECT_TARGET: Is 'items' key missing? {'items' not in schema_part}")
-        print(f"DETAILED_INSPECT_TARGET: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
-        print(f"DETAILED_INSPECT_TARGET: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
-        print(f"DETAILED_INSPECT_TARGET: Calculated 'needs_items_patch' for '{current_param_name_from_path}': {needs_items_patch}")
+    # Improved extraction of parameter name for logging
+    param_name_for_log = "N/A"
+    if ".param:'" in path:
+        try:
+            param_name_for_log = path.split(".param:'")[-1].split("'")[0]
+        except Exception:
+            pass
+
+    # Log for ALL arrays to see what we get
+    if is_array_type:
+        print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
+        print(f"DETAILED_INSPECT_ARRAY: Current schema_part: {json.dumps(schema_part, indent=2)}")
+        print(f"DETAILED_INSPECT_ARRAY: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
+        print(f"DETAILED_INSPECT_ARRAY: Is 'items' key missing? {'items' not in schema_part}")
+        print(f"DETAILED_INSPECT_ARRAY: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
+        print(f"DETAILED_INSPECT_ARRAY: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
+        print(f"DETAILED_INSPECT_ARRAY: Calculated 'needs_items_patch': {needs_items_patch}")
 
     if needs_items_patch:
-        description = schema_part.get("description", "N/A")
+        description_content = schema_part.get("description", "N/A")
         original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
-        print(f"DEBUG_PATCH_ACTION: >>> Array at path: '{path}' (Desc: '{description}') needs 'items' patch. Original 'items' value: {original_items_val_str}")
-        print(f"DEBUG_PATCH_ACTION: Schema part BEFORE patch: {json.dumps(schema_part, indent=2)}")
+        action_log_param_name = param_name_for_log
+        print(f"DEBUG_PATCH_ACTION: >>> For Param/Path='{action_log_param_name}' / '{path}' (Desc: '{description_content}')")
+        print(f"DEBUG_PATCH_ACTION: Needs 'items' patch. Original 'items' value: {original_items_val_str}")
+        print(f"DEBUG_PATCH_ACTION: Schema part BEFORE 'items' patch: {json.dumps(schema_part, indent=2)}")
         schema_part["items"] = {"type": "string"}
-        print(f"DEBUG_PATCH_ACTION: Schema part AFTER patch: {json.dumps(schema_part, indent=2)}")
+        print(f"DEBUG_PATCH_ACTION: Schema part AFTER 'items' patch: {json.dumps(schema_part, indent=2)}")
 
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
