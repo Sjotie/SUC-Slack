@@ -238,7 +238,7 @@ import asyncio
 
 async def log_all_mcp_tools():
     print("INFO: Listing all available tools from each MCP server (after connect)...")
-    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server, local_notion_server_by_url]:
+    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, local_notion_server_by_url]:
         try:
             await mcp_server.connect()
             tools = await mcp_server.list_tools()
