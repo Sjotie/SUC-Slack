@@ -63,15 +63,19 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_d
     #     print(f"DETAILED_INSPECT_ARRAY: Calculated 'needs_items_patch': {needs_items_patch}")
 
     if needs_items_patch:
-        # description_content = schema_part.get("description", "N/A")
-        # original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
-        # action_log_param_name = param_name_for_log
-
-        # print(f"DEBUG_PATCH_ACTION: >>> For Param/Path='{action_log_param_name}' / '{path}' (Desc: '{description_content}')")
-        # print(f"DEBUG_PATCH_ACTION: Needs 'items' patch. Original 'items' value: {original_items_val_str}")
-        # print(f"DEBUG_PATCH_ACTION: Schema part BEFORE 'items' patch: {json.dumps(schema_part, indent=2)}")
+        print(f"DEBUG_PATCH_ACTION: Patching 'items' for array at path '{path}'. Setting to {{'type': 'string'}}.", flush=True)
         schema_part["items"] = {"type": "string"}
-        # print(f"DEBUG_PATCH_ACTION: Schema part AFTER 'items' patch: {json.dumps(schema_part, indent=2)}")
+
+    # --- NEW: If items is a dict and type is array, recurse into its items ---
+    if is_array_type and isinstance(schema_part.get("items"), dict):
+        items_dict = schema_part["items"]
+        if items_dict.get("type") == "array":
+            print(f"DEBUG_PATCH_ACTION: Recursing into nested array 'items' at path '{path}.items'", flush=True)
+            _ensure_items_in_schema_recursive(items_dict, f"{path}.items", depth=depth+1, max_depth=max_depth)
+        # If items_dict is a dict but missing type, still recurse to patch further
+        elif "type" not in items_dict:
+            print(f"DEBUG_PATCH_ACTION: Recursing into 'items' dict missing type at path '{path}.items'", flush=True)
+            _ensure_items_in_schema_recursive(items_dict, f"{path}.items", depth=depth+1, max_depth=max_depth)
 
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
