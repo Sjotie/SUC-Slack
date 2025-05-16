@@ -35,6 +35,9 @@ import os
 os.environ["LITELLM_LOG"] = "DEBUG"
 import litellm
 
+# --- Turn on LiteLLM debug logging for troubleshooting VertexAI errors ---
+litellm._turn_on_debug()
+
 from custom_slack_agent import _agent, ACTIVE_MCP_SERVERS
 
 from openai.types.responses import ResponseTextDeltaEvent
