@@ -62,14 +62,11 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
                     _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]")
 
 def patch_tool_list_schemas_V2(tools_list):
-    """
-    Iterates through a list of tools and patches their parameter schemas.
-    """
     if not isinstance(tools_list, list):
         print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.")
         return tools_list
 
-    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - ENTER_RECURSE logging active).")
+    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - MAX_DEBUG logging active).")
     for i, tool_def in enumerate(tools_list):
         parameters_schema = None
         tool_name_for_debug = f"tool_at_index_{i}"
@@ -80,37 +77,49 @@ def patch_tool_list_schemas_V2(tools_list):
         elif hasattr(tool_def, "parameters"):
             parameters_schema = getattr(tool_def, "parameters", None)
             tool_name_for_debug = getattr(tool_def, "name", tool_name_for_debug)
-
+        
         if not isinstance(parameters_schema, dict):
             continue
 
-        # --- Ensure main parameters schema is type object (if it has properties) ---
+        # Basic schema type enforcement (as before)
         if "properties" in parameters_schema:
             if not parameters_schema.get("type"):
                 parameters_schema["type"] = "object"
             elif parameters_schema.get("type") != "object":
                 parameters_schema["type"] = "object"
-        elif not parameters_schema:
-            parameters_schema.update({"type": "object", "properties": {}})
-
+        elif not parameters_schema: 
+             parameters_schema.update({"type": "object", "properties": {}})
+        
         current_schema_type = parameters_schema.get('type')
         if current_schema_type == "object":
             if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
                 for param_name, param_schema_dict in parameters_schema["properties"].items():
-                    # --- Log the specific parameter schema BEFORE calling recursive helper ---
+                    path_for_recursive_call = f"tool:'{tool_name_for_debug}'.param:'{param_name}'"
+                    
+                    # --- MAX DEBUG FOR PROBLEMATIC PARAMS ---
                     if param_name in ["sorts", "children", "title", "description"]:
-                        print(f"PRE_RECURSE_INSPECT: Tool='{tool_name_for_debug}', Param='{param_name}', Schema BEFORE _ensure_items: {json.dumps(param_schema_dict, indent=2)}")
-                    _ensure_items_in_schema_recursive(param_schema_dict, f"tool:'{tool_name_for_debug}'.param:'{param_name}'")
-                    # --- Log the specific parameter schema AFTER calling recursive helper ---
+                        print(f"\nMAX_DEBUG_PRE_CALL: ----- Processing: Tool='{tool_name_for_debug}', Param='{param_name}' -----")
+                        print(f"MAX_DEBUG_PRE_CALL: Type of param_schema_dict: {type(param_schema_dict)}")
+                        if isinstance(param_schema_dict, dict):
+                            print(f"MAX_DEBUG_PRE_CALL: param_schema_dict.get('type') == 'array': {param_schema_dict.get('type') == 'array'}")
+                            print(f"MAX_DEBUG_PRE_CALL: 'items' in param_schema_dict: {'items' in param_schema_dict}")
+                            print(f"MAX_DEBUG_PRE_CALL: param_schema_dict value BEFORE calling _ensure_items_in_schema_recursive: {json.dumps(param_schema_dict, indent=2)}\n")
+                        else:
+                            print(f"MAX_DEBUG_PRE_CALL: param_schema_dict for '{param_name}' is NOT a dict: {param_schema_dict}\n")
+                    # --- END MAX DEBUG ---
+
+                    _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
+                    
+                    # --- MAX DEBUG POST CALL FOR PROBLEMATIC PARAMS ---
                     if param_name in ["sorts", "children", "title", "description"]:
-                        print(f"POST_RECURSE_INSPECT: Tool='{tool_name_for_debug}', Param='{param_name}', Schema AFTER _ensure_items: {json.dumps(param_schema_dict, indent=2)}")
-            else:
-                _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_object")
+                         print(f"MAX_DEBUG_POST_CALL: Param='{param_name}', Schema AFTER _ensure_items_in_schema_recursive: {json.dumps(param_schema_dict, indent=2)}")
+                         print(f"MAX_DEBUG_POST_CALL: ---------------------------------------------------------------------\n")
+                    # --- END MAX DEBUG POST CALL ---
+            # else handling for no "properties"
         elif current_schema_type == "array":
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
-        else:
-            _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_type")
-
+        # else handling for other types
+            
     return tools_list
 # --- END: Schema Patching Function ---
 
