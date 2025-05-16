@@ -32,11 +32,11 @@ except ModuleNotFoundError:
 import os
 
 # Set LiteLLM logging level via environment variable (recommended way)
-os.environ["LITELLM_LOG"] = "DEBUG"
+os.environ["LITELLM_LOG"] = "WARNING"
 import litellm
 
-# --- Turn on LiteLLM debug logging for troubleshooting VertexAI errors ---
-litellm._turn_on_debug()
+# --- LiteLLM debug logging is disabled ---
+# litellm._turn_on_debug()
 
 from custom_slack_agent import _agent, ACTIVE_MCP_SERVERS
 
