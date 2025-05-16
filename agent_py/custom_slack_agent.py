@@ -79,7 +79,7 @@ if not agent_model_name_from_env.startswith("litellm/"):
     print(f"PY_AGENT_WARNING: AGENT_MODEL '{agent_model_name_from_env}' does not start with 'litellm/'. "
           f"Ensure it is correctly formatted for LiteLLM (e.g., 'litellm/provider/model').")
 
-desired_max_tokens = 124000
+desired_max_tokens = 500000
 print(f"PY_AGENT_INFO: Attempting to set max_tokens to {desired_max_tokens} for the agent.")
 
 custom_model_settings = ModelSettings(
