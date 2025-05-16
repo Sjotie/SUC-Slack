@@ -1,5 +1,6 @@
 import os
 import json
+print("!!! MCP_SERVERS.PY - FILE VERSION 20240516-153000 HAS BEEN LOADED !!!", flush=True)
 from agents.mcp import MCPServerSse, MCPServerStdio
 
 import contextvars
@@ -9,6 +10,7 @@ from custom_slack_agent import slack_user_id_var
 import json
 
 def _ensure_items_in_schema_recursive(schema_part, path="schema"):
+    print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} !!!!!!!!!", flush=True)
     # --- Log EVERY entry into this function ---
     print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}'")
     if isinstance(schema_part, dict):
@@ -62,6 +64,7 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
                     _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]")
 
 def patch_tool_list_schemas_V2(tools_list):
+    print(f"!!!!!!!!!! ENTERED patch_tool_list_schemas_V2 with {len(tools_list) if isinstance(tools_list, list) else 'NON-LIST OBJECT'} tools !!!!!!!!!", flush=True)
     if not isinstance(tools_list, list):
         print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.")
         return tools_list
