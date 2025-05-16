@@ -337,7 +337,14 @@ if not hubspot_mcp_token:
 
 from agents.mcp import MCPServerStdio
 
-hubspot_mcp_server = MCPServerStdio(
+# --- Patched MCPServerStdio for HubSpot ---
+class PatchedMCPServerStdio(MCPServerStdio):
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerStdio).")
+        return patch_tool_list_schemas_V2(tools)
+
+hubspot_mcp_server = PatchedMCPServerStdio(
     name="hubspot",
     params={
         "command": "cmd" if os.name == "nt" else "npx",
@@ -482,7 +489,7 @@ import asyncio
 
 async def log_all_mcp_tools():
     print("INFO: Listing all available tools from each MCP server (after connect)...")
-    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, local_notion_server_by_url]:
+    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, local_notion_server_by_url, hubspot_mcp_server]:
         try:
             await mcp_server.connect()
             tools = await mcp_server.list_tools()
