@@ -185,20 +185,26 @@ class NotionMCPByURL(MCPServerSse):
     async def connect(self):
         dynamic_url_for_connection = self._get_user_specific_url()
         
-        # The `params` attribute is used by the base class's connect/create_streams method.
-        # We need to update it here.
         if not hasattr(self, 'params') or self.params is None:
             self.params = {}
         self.params['url'] = dynamic_url_for_connection
-        # If you needed static headers for the GET SSE connection, set them here:
-        # self.params['headers'] = {"Some-Static-Header": "Value"}
-        
-        print(f"DEBUG ({self.name}): Attempting to connect to: {self.params['url']}")
+
+        # Try to force the transport/client_session to use the new URL if possible
+        if hasattr(self, 'client_session') and self.client_session and \
+           hasattr(self.client_session, 'transport') and self.client_session.transport and \
+           hasattr(self.client_session.transport, 'url'):
+            print(f"DEBUG ({self.name}): Current transport URL before override: {self.client_session.transport.url}")
+            self.client_session.transport.url = dynamic_url_for_connection
+            print(f"DEBUG ({self.name}): Attempted to override transport URL directly.")
+
+        print(f"DEBUG ({self.name}): Attempting to connect to (from self.params): {self.params.get('url')}")
         try:
             await super().connect()
-            print(f"DEBUG ({self.name}): Successfully connected to {self.params['url']}.")
+            print(f"DEBUG ({self.name}): Successfully connected to (according to super().connect()): {self.params.get('url')}.")
         except Exception as e:
-            print(f"ERROR ({self.name}): Failed to connect to {self.params['url']}: {e}")
+            print(f"ERROR ({self.name}): Failed to connect to {self.params.get('url')}: {e}")
+            import traceback
+            print(f"TRACEBACK ({self.name}): {traceback.format_exc()}")
             raise
 
     # The `initialize` method in this class no longer needs to inject notionApiKey
