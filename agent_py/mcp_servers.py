@@ -331,47 +331,47 @@ hubspot_mcp_token = os.getenv("HUBSPOT_PRIVATE_APP_ACCESS_TOKEN")
 if not hubspot_mcp_token:
     print("WARNING: HUBSPOT_PRIVATE_APP_ACCESS_TOKEN is not set. HubSpot MCP may not start correctly.")
 
-from agents.mcp import MCPServerStdio
+# from agents.mcp import MCPServerStdio
 
-hubspot_mcp_server = MCPServerStdio(
-    name="hubspot",
-    params={
-        "command": "cmd" if os.name == "nt" else "npx",
-        "args": (
-            ["/c", "npx", "-y", "@hubspot/mcp-server"]
-            if os.name == "nt"
-            else ["-y", "@hubspot/mcp-server"]
-        ),
-        "env": {
-            "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
-        }
-    },
-    client_session_timeout_seconds=120.0,
-)
+# hubspot_mcp_server = MCPServerStdio(
+#     name="hubspot",
+#     params={
+#         "command": "cmd" if os.name == "nt" else "npx",
+#         "args": (
+#             ["/c", "npx", "-y", "@hubspot/mcp-server"]
+#             if os.name == "nt"
+#             else ["-y", "@hubspot/mcp-server"]
+#         ),
+#         "env": {
+#             "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
+#             "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
+#         }
+#     },
+#     client_session_timeout_seconds=120.0,
+# )
 
 # --- Slack MCP Server definition ---
-slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
-slack_team_id = os.getenv("SLACK_TEAM_ID")
-if not slack_bot_token or not slack_team_id:
-    print("WARNING: SLACK_BOT_TOKEN or SLACK_TEAM_ID is not set. Slack MCP may not start correctly.")
+# slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
+# slack_team_id = os.getenv("SLACK_TEAM_ID")
+# if not slack_bot_token or not slack_team_id:
+#     print("WARNING: SLACK_BOT_TOKEN or SLACK_TEAM_ID is not set. Slack MCP may not start correctly.")
 
-slack_mcp_server = MCPServerStdio(
-    name="slack",
-    params={
-        "command": "npx",
-        "args": [
-            "-y",
-            "@modelcontextprotocol/server-slack"
-        ],
-        "env": {
-            "SLACK_BOT_TOKEN": slack_bot_token or "",
-            "SLACK_TEAM_ID": slack_team_id or "",
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or "/tmp",
-        }
-    },
-    client_session_timeout_seconds=60.0,
-)
+# slack_mcp_server = MCPServerStdio(
+#     name="slack",
+#     params={
+#         "command": "npx",
+#         "args": [
+#             "-y",
+#             "@modelcontextprotocol/server-slack"
+#         ],
+#         "env": {
+#             "SLACK_BOT_TOKEN": slack_bot_token or "",
+#             "SLACK_TEAM_ID": slack_team_id or "",
+#             "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or "/tmp",
+#         }
+#     },
+#     client_session_timeout_seconds=60.0,
+# )
 
 # --- Node.js Notion MCP Server (URL-based user token) ---
 class NotionMCPByURL(MCPServerSse):
