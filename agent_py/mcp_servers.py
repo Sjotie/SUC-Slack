@@ -13,25 +13,24 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
         return
 
     is_array_type = schema_part.get("type") == "array"
-    # Condition: Is it an array AND (items is missing OR items is present but not a valid schema dict)?
-    needs_items_patch = is_array_type and (not schema_part.get("items") or not isinstance(schema_part.get("items"), dict))
+    items_value = schema_part.get("items")
+    items_is_missing_or_invalid = "items" not in schema_part or not isinstance(items_value, dict)
+    needs_items_patch = is_array_type and items_is_missing_or_invalid
 
-    # ---- START NEW DETAILED LOGGING FOR A SPECIFIC PARAMETER ----
-    # Let's focus on 'sorts' or 'children' if we encounter them
-    current_param_name = path.split('.')[-1] # Crude way to get current param name from path
-    if current_param_name in ["sorts", "children", "title", "description"] and is_array_type:
-        print(f"DETAILED_INSPECT: Path='{path}', Param='{current_param_name}', IsArray={is_array_type}")
-        print(f"DETAILED_INSPECT: Current schema_part for '{current_param_name}': {json.dumps(schema_part, indent=2)}")
-        print(f"DETAILED_INSPECT: Value of 'schema_part.get(\"items\")': {schema_part.get('items')}")
-        print(f"DETAILED_INSPECT: Value of 'not schema_part.get(\"items\")': {not schema_part.get('items')}")
-        print(f"DETAILED_INSPECT: Value of 'isinstance(schema_part.get(\"items\"), dict)': {isinstance(schema_part.get('items'), dict)}")
-        print(f"DETAILED_INSPECT: Calculated 'needs_items_patch' for '{current_param_name}': {needs_items_patch}")
-    # ---- END NEW DETAILED LOGGING ----
+    current_param_name_from_path = path.split('.')[-1]
+    if current_param_name_from_path in ["sorts", "children", "title", "description"] and is_array_type:
+        print(f"DETAILED_INSPECT_TARGET: Path='{path}', Param='{current_param_name_from_path}', IsArray={is_array_type}")
+        print(f"DETAILED_INSPECT_TARGET: Current schema_part for '{current_param_name_from_path}': {json.dumps(schema_part, indent=2)}")
+        print(f"DETAILED_INSPECT_TARGET: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
+        print(f"DETAILED_INSPECT_TARGET: Is 'items' key missing? {'items' not in schema_part}")
+        print(f"DETAILED_INSPECT_TARGET: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
+        print(f"DETAILED_INSPECT_TARGET: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
+        print(f"DETAILED_INSPECT_TARGET: Calculated 'needs_items_patch' for '{current_param_name_from_path}': {needs_items_patch}")
 
     if needs_items_patch:
         description = schema_part.get("description", "N/A")
-        original_items_val = schema_part.get("items", "KEY_NOT_PRESENT")
-        print(f"DEBUG_PATCH_ACTION: >>> Array at path: '{path}' (Desc: '{description}') needs 'items' patch. Original 'items' value: {json.dumps(original_items_val)}")
+        original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
+        print(f"DEBUG_PATCH_ACTION: >>> Array at path: '{path}' (Desc: '{description}') needs 'items' patch. Original 'items' value: {original_items_val_str}")
         print(f"DEBUG_PATCH_ACTION: Schema part BEFORE patch: {json.dumps(schema_part, indent=2)}")
         schema_part["items"] = {"type": "string"}
         print(f"DEBUG_PATCH_ACTION: Schema part AFTER patch: {json.dumps(schema_part, indent=2)}")
