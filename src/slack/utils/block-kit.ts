@@ -479,6 +479,7 @@ export function aiResponseMessage(
     // Slack section block text field limit is 3000 chars, but we need to account for "```\n" + content + "\n```" + "..." (if truncated)
     // 2759 is a conservative value to leave extra buffer for formatting and ellipsis
     const MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK = 2759;
+    const MAX_LINES_PER_BLOCK = 5; // New: max 5 lines per section block
 
     // Slack requires at least one visible character.
     const safeContent = content && content.trim().length > 0
@@ -539,6 +540,33 @@ export function aiResponseMessage(
         return Math.max(1, Math.min(splitPoint, text.length));
     }
 
+    /**
+     * Splits a text block into multiple blocks if it exceeds maxLines lines.
+     * @param text The input text.
+     * @param maxLines The maximum number of lines per block.
+     * @returns An array of text blocks.
+     */
+    function splitSectionByLines(text: string, maxLines: number): string[] {
+        const lines = text.split('\n');
+        if (lines.length <= maxLines || !text.trim()) {
+            return [text];
+        }
+
+        const newSections: string[] = [];
+        let currentBlockLines: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+            currentBlockLines.push(lines[i]);
+            if (currentBlockLines.length === maxLines && i < lines.length - 1) {
+                newSections.push(currentBlockLines.join('\n'));
+                currentBlockLines = [];
+            }
+        }
+        if (currentBlockLines.length > 0) {
+            newSections.push(currentBlockLines.join('\n'));
+        }
+        return newSections;
+    }
+
     function splitTextIntoSections(text: string, maxLen: number): string[] {
         const sentences = text.split(/(?<=[\.!?])\s+/);
         const sections: string[] = [];
@@ -587,7 +615,7 @@ export function aiResponseMessage(
                 // --- Streaming an Open Think Block ---
                 const textBeforeOpenThinkRaw = remainingContentToProcess.substring(0, lastOpenThinkPos);
                 let openThinkContentRaw = remainingContentToProcess.substring(lastOpenThinkPos + thinkStartTag.length);
-                
+
                 // Convert Markdown in the text *before* the think block
                 if (textBeforeOpenThinkRaw.trim()) {
                     const convertedTextBefore = convertMarkdownToSlackMrkdwn(textBeforeOpenThinkRaw.trim());
@@ -595,7 +623,12 @@ export function aiResponseMessage(
                     segmentsBefore.forEach((seg, index) => {
                         if (seg.trim()) {
                             for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
-                                if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                                if (chunk.trim()) {
+                                    const lineSplitSubChunks = splitSectionByLines(chunk.trim(), MAX_LINES_PER_BLOCK);
+                                    for (const subChunk of lineSplitSubChunks) {
+                                        if (subChunk.trim()) finalContentBlocks.push(section(mrkdwn(subChunk)));
+                                    }
+                                }
                             }
                         }
                         if (index < segmentsBefore.length - 1) finalContentBlocks.push(divider());
@@ -609,14 +642,14 @@ export function aiResponseMessage(
                     ? openThinkContentRaw.substring(0, MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK) + "..."
                     : openThinkContentRaw;
                 finalContentBlocks.push(section(mrkdwn("```\n" + truncatedThinkContent + "\n```")));
-                
+
                 remainingContentToProcess = ""; // Consumed all for this special streaming case
-                break; 
+                break;
             }
 
             // --- Normal Processing or Final Call (Segments Content) ---
             let textToProcessThisIteration = remainingContentToProcess;
-            remainingContentToProcess = ""; 
+            remainingContentToProcess = "";
 
             const segmentRegex = /(<think>[\s\S]*?<\/think>)|([\s\S]+?(?=<think>|$))/g;
             let match;
@@ -630,7 +663,6 @@ export function aiResponseMessage(
                 if (thinkSegmentWithTags) {
                     let thinkContentRaw = thinkSegmentWithTags.substring(thinkStartTag.length, thinkSegmentWithTags.length - thinkEndTag.length).trim();
                     if (thinkContentRaw) {
-                        // thinkContentRaw = convertMarkdownToSlackMrkdwn(thinkContentRaw); // Optional: if think content needs conversion
                         const truncatedThinkContent = thinkContentRaw.length > MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK
                             ? thinkContentRaw.substring(0, MAX_CHARS_FOR_THINK_CONTENT_INSIDE_CODEBLOCK) + "..."
                             : thinkContentRaw;
@@ -644,7 +676,12 @@ export function aiResponseMessage(
                         segments.forEach((seg, index) => {
                             if (seg.trim()) {
                                 for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
-                                    if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                                    if (chunk.trim()) {
+                                        const lineSplitSubChunks = splitSectionByLines(chunk.trim(), MAX_LINES_PER_BLOCK);
+                                        for (const subChunk of lineSplitSubChunks) {
+                                            if (subChunk.trim()) finalContentBlocks.push(section(mrkdwn(subChunk)));
+                                        }
+                                    }
                                 }
                             }
                             if (index < segments.length - 1) {
@@ -663,14 +700,19 @@ export function aiResponseMessage(
                     segmentsRest.forEach((seg, index) => {
                         if (seg.trim()) {
                             for (const chunk of splitTextIntoSections(seg.trim(), MAX_CHARS_PER_REGULAR_BLOCK)) {
-                                if (chunk.trim()) finalContentBlocks.push(section(mrkdwn(chunk)));
+                                if (chunk.trim()) {
+                                    const lineSplitSubChunks = splitSectionByLines(chunk.trim(), MAX_LINES_PER_BLOCK);
+                                    for (const subChunk of lineSplitSubChunks) {
+                                        if (subChunk.trim()) finalContentBlocks.push(section(mrkdwn(subChunk)));
+                                    }
+                                }
                             }
                         }
                         if (index < segmentsRest.length - 1) finalContentBlocks.push(divider());
                     });
                 }
             }
-        } 
+        }
     }
 
     const blocks: Block[] = [...finalContentBlocks];
@@ -680,7 +722,7 @@ export function aiResponseMessage(
             blocks.push(divider());
             for (const result of functionResults) {
                 // Function results are typically pre-formatted or code-like
-                const pretty = `\`\`\`\n${result}\n\`\`\``; 
+                const pretty = `\`\`\`\n${result}\n\`\`\``;
                 for (const chunk of splitTextIntoSections(pretty, MAX_CHARS_PER_REGULAR_BLOCK)) {
                     if (chunk.trim()) blocks.push(section(mrkdwn(chunk)));
                 }
@@ -693,13 +735,22 @@ export function aiResponseMessage(
             if (metadataElements.length > 0) blocks.push(context(metadataElements));
         }
     }
-    
+
     // Fallback text should also be converted for consistency, though it's short
-    const fallbackText = convertMarkdownToSlackMrkdwn(safeContent.substring(0, 200)).substring(0,150) + (safeContent.length > 150 ? '...' : '');
+    const fallbackTextContent = convertMarkdownToSlackMrkdwn(safeContent.substring(0, 200)).substring(0,150) + (safeContent.length > 150 ? '...' : '');
+    let finalBlocks = blocks;
+    if (finalBlocks.length === 0) {
+        const initialFallbackBlocks: Block[] = [];
+        const lineSplitFallbackChunks = splitSectionByLines(fallbackTextContent || '(empty response)', MAX_LINES_PER_BLOCK);
+        for (const subChunk of lineSplitFallbackChunks) {
+            if (subChunk.trim()) initialFallbackBlocks.push(section(mrkdwn(subChunk)));
+        }
+        finalBlocks = initialFallbackBlocks.length > 0 ? initialFallbackBlocks : [section(mrkdwn('(empty response)'))];
+    }
 
     return {
-        blocks: blocks.length > 0 ? blocks : [section(mrkdwn(fallbackText || '(empty response)'))],
-        text: fallbackText,
+        blocks: finalBlocks,
+        text: fallbackTextContent,
     };
 }
 
