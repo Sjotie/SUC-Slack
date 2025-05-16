@@ -66,10 +66,10 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
 def patch_tool_list_schemas_V2(tools_list):
     print(f"!!!!!!!!!! ENTERED patch_tool_list_schemas_V2 with {len(tools_list) if isinstance(tools_list, list) else 'NON-LIST OBJECT'} tools !!!!!!!!!", flush=True)
     if not isinstance(tools_list, list):
-        print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.")
+        print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.", flush=True)
         return tools_list
 
-    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - LOGGING ENTIRE PROBLEMATIC SCHEMAS).")
+    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - FORCED PARAM SCHEMA LOGGING).", flush=True)
     for i, tool_def in enumerate(tools_list):
         parameters_schema = None
         tool_name_for_debug = f"tool_at_index_{i}"
@@ -82,45 +82,62 @@ def patch_tool_list_schemas_V2(tools_list):
             tool_name_for_debug = getattr(tool_def, "name", tool_name_for_debug)
         
         if not isinstance(parameters_schema, dict):
+            print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' has no valid parameters schema (or not a dict). Type: {type(parameters_schema)}. Skipping its params.", flush=True)
             continue
 
-        # --- LOG ENTIRE PARAMETERS SCHEMA FOR KNOWN PROBLEMATIC TOOL NAMES ---
-        problematic_tool_names = [
-            "query-database",
-            "create-page",
-            "create-database",
-            "update-database",
-            "append-block-children"
-        ]
-        if tool_name_for_debug in problematic_tool_names:
-            print(f"\nRAW_SCHEMA_LOG: ----- Tool: '{tool_name_for_debug}' -----")
-            print(f"RAW_SCHEMA_LOG: Parameters schema BEFORE ANY V2 patching: {json.dumps(parameters_schema, indent=2, default=str)}")
-        # --- END LOG ---
+        # --- Log the entire parameters_schema for this tool BEFORE any modifications in this function ---
+        print(f"\nRAW_PARAMS_SCHEMA_LOG (PRE-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
+        print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
+        # ---
 
-        # Step 1: Basic schema type enforcement (as before)
+        # Basic schema type enforcement
         if "properties" in parameters_schema:
-            if not parameters_schema.get("type"):
+            if parameters_schema.get("type") != "object":
+                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema: Forcing type to 'object' as 'properties' key exists. Original type: '{parameters_schema.get('type')}'", flush=True)
                 parameters_schema["type"] = "object"
-            elif parameters_schema.get("type") != "object":
-                parameters_schema["type"] = "object"
-        elif not parameters_schema:
+        elif not parameters_schema: 
+             print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema: Is empty, setting to type object with empty properties.", flush=True)
              parameters_schema.update({"type": "object", "properties": {}})
-        
-        # Step 2: Iterate and call recursive helper (as before)
+        else:
+            # If no 'properties' and not empty, log its type to see what it is
+            print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema has no 'properties' and is not empty. Type: '{parameters_schema.get('type')}'. Schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
+
+
         current_schema_type_for_iteration = parameters_schema.get('type')
         if current_schema_type_for_iteration == "object":
             if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
+                print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}': Iterating properties for items check.", flush=True)
                 for param_name, param_schema_dict in parameters_schema["properties"].items():
                     path_for_recursive_call = f"tool:'{tool_name_for_debug}'.param:'{param_name}'"
+                    
+                    # --- Explicitly log the param_schema_dict being passed to the recursive function ---
+                    print(f"  INSPECT_CALL_TO_RECURSIVE: Tool='{tool_name_for_debug}', Param='{param_name}'", flush=True)
+                    print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict type: {type(param_schema_dict)}", flush=True)
+                    if isinstance(param_schema_dict, dict):
+                         print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {json.dumps(param_schema_dict, indent=4)}", flush=True)
+                    else:
+                         print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {str(param_schema_dict)}", flush=True)
+                    # ---
+                    
                     _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
+            else:
+                print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' (type object) has no 'properties' dict OR 'properties' is not a dict. Properties: {parameters_schema.get('properties')}", flush=True)
         elif current_schema_type_for_iteration == "array":
+            print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' params is type 'array'. Path: tool:'{tool_name_for_debug}'.params_direct_array", flush=True)
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
+        else:
+            print(f"DEBUG_PATCH: Parameters schema for '{tool_name_for_debug}' (type: {current_schema_type_for_iteration}) not an 'object' with properties or 'array'. Full schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
+            # If it's a dict but not object/array, still try to dive in case of unusual structure
+            if isinstance(parameters_schema, dict):
+                _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_structure")
 
-        # --- LOG ENTIRE PARAMETERS SCHEMA AFTER ALL PATCHING FOR THIS TOOL ---
-        if tool_name_for_debug in problematic_tool_names:
-            print(f"RAW_SCHEMA_LOG: Parameters schema for '{tool_name_for_debug}' AFTER ALL V2 patching: {json.dumps(parameters_schema, indent=2, default=str)}")
-            print(f"RAW_SCHEMA_LOG: -------------------------------------------\n")
-        # --- END LOG ---
+
+        # --- Log the entire parameters_schema for this tool AFTER all modifications in this function ---
+        print(f"\nRAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
+        print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
+        print(f"RAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): ---------------------------------------\n", flush=True)
+        # ---
+            
     return tools_list
 # --- END: Schema Patching Function ---
 
