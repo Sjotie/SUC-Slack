@@ -4,6 +4,17 @@ load_dotenv()  # Load environment variables first
 
 import contextvars
 
+# ---------------------------------------------------------------------
+# Work-around for LiteLLM Vertex-AI max depth check when using Gemini.
+# (Default is 10; we bump to 25 before the first call.)
+# ---------------------------------------------------------------------
+try:
+    from litellm.llms.vertex_ai import common_utils as _vx_utils
+    _vx_utils.DEFAULT_MAX_RECURSE_DEPTH = 25   # was 10
+except Exception:
+    # Not on a Vertex/Gemini build  silently ignore.
+    pass
+
 # Single ContextVar instance shared by server & MCP filtering
 slack_user_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "slack_user_id", default=None
