@@ -24,6 +24,13 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
 
     is_array_type = schema_part.get("type") == "array"
     items_value = schema_part.get("items")
+    param_name_for_log = "N/A"
+    if ".param:'" in path:
+        try:
+            param_name_for_log = path.split(".param:'")[-1].split("'")[0]
+        except Exception:
+            pass
+
     items_is_missing_or_invalid = False
 
     if "items" not in schema_part:
@@ -41,13 +48,6 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
         items_is_missing_or_invalid = False
 
     needs_items_patch = is_array_type and items_is_missing_or_invalid
-
-    param_name_for_log = "N/A"
-    if ".param:'" in path:
-        try:
-            param_name_for_log = path.split(".param:'")[-1].split("'")[0]
-        except Exception:
-            pass
 
     if is_array_type:
         print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
