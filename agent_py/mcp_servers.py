@@ -9,6 +9,14 @@ from custom_slack_agent import slack_user_id_var
 import json
 
 def _ensure_items_in_schema_recursive(schema_part, path="schema"):
+    # --- Log EVERY entry into this function ---
+    print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}'")
+    if isinstance(schema_part, dict):
+        print(f"ENTER_RECURSE_DICT_CONTENT: {json.dumps(schema_part, indent=2)}")
+    else:
+        print(f"ENTER_RECURSE_NON_DICT_CONTENT: {str(schema_part)[:200]}")
+    # --- End Log EVERY entry ---
+
     if not isinstance(schema_part, dict):
         return
 
@@ -17,7 +25,6 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
     items_is_missing_or_invalid = "items" not in schema_part or not isinstance(items_value, dict)
     needs_items_patch = is_array_type and items_is_missing_or_invalid
 
-    # Improved extraction of parameter name for logging
     param_name_for_log = "N/A"
     if ".param:'" in path:
         try:
@@ -25,7 +32,6 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
         except Exception:
             pass
 
-    # Log for ALL arrays to see what we get
     if is_array_type:
         print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
         print(f"DETAILED_INSPECT_ARRAY: Current schema_part: {json.dumps(schema_part, indent=2)}")
@@ -39,10 +45,11 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
         description_content = schema_part.get("description", "N/A")
         original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
         action_log_param_name = param_name_for_log
+        
         print(f"DEBUG_PATCH_ACTION: >>> For Param/Path='{action_log_param_name}' / '{path}' (Desc: '{description_content}')")
         print(f"DEBUG_PATCH_ACTION: Needs 'items' patch. Original 'items' value: {original_items_val_str}")
         print(f"DEBUG_PATCH_ACTION: Schema part BEFORE 'items' patch: {json.dumps(schema_part, indent=2)}")
-        schema_part["items"] = {"type": "string"}
+        schema_part["items"] = {"type": "string"} 
         print(f"DEBUG_PATCH_ACTION: Schema part AFTER 'items' patch: {json.dumps(schema_part, indent=2)}")
 
     for key, value in list(schema_part.items()):
