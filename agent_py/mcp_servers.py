@@ -13,15 +13,28 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
         return
 
     is_array_type = schema_part.get("type") == "array"
-    has_items = "items" in schema_part
+    # Condition: Is it an array AND (items is missing OR items is present but not a valid schema dict)?
+    needs_items_patch = is_array_type and (not schema_part.get("items") or not isinstance(schema_part.get("items"), dict))
 
-    if is_array_type:
-        if not has_items:
-            description = schema_part.get("description", "N/A")
-            print(f"DEBUG_PATCH_ACTION: >>> Adding 'items': {{'type': 'string'}} to array at path: '{path}' (Desc: '{description}')")
-            print(f"DEBUG_PATCH_ACTION: Schema part BEFORE patch: {json.dumps(schema_part, indent=2)}")
-            schema_part["items"] = {"type": "string"}
-            print(f"DEBUG_PATCH_ACTION: Schema part AFTER patch: {json.dumps(schema_part, indent=2)}")
+    # ---- START NEW DETAILED LOGGING FOR A SPECIFIC PARAMETER ----
+    # Let's focus on 'sorts' or 'children' if we encounter them
+    current_param_name = path.split('.')[-1] # Crude way to get current param name from path
+    if current_param_name in ["sorts", "children", "title", "description"] and is_array_type:
+        print(f"DETAILED_INSPECT: Path='{path}', Param='{current_param_name}', IsArray={is_array_type}")
+        print(f"DETAILED_INSPECT: Current schema_part for '{current_param_name}': {json.dumps(schema_part, indent=2)}")
+        print(f"DETAILED_INSPECT: Value of 'schema_part.get(\"items\")': {schema_part.get('items')}")
+        print(f"DETAILED_INSPECT: Value of 'not schema_part.get(\"items\")': {not schema_part.get('items')}")
+        print(f"DETAILED_INSPECT: Value of 'isinstance(schema_part.get(\"items\"), dict)': {isinstance(schema_part.get('items'), dict)}")
+        print(f"DETAILED_INSPECT: Calculated 'needs_items_patch' for '{current_param_name}': {needs_items_patch}")
+    # ---- END NEW DETAILED LOGGING ----
+
+    if needs_items_patch:
+        description = schema_part.get("description", "N/A")
+        original_items_val = schema_part.get("items", "KEY_NOT_PRESENT")
+        print(f"DEBUG_PATCH_ACTION: >>> Array at path: '{path}' (Desc: '{description}') needs 'items' patch. Original 'items' value: {json.dumps(original_items_val)}")
+        print(f"DEBUG_PATCH_ACTION: Schema part BEFORE patch: {json.dumps(schema_part, indent=2)}")
+        schema_part["items"] = {"type": "string"}
+        print(f"DEBUG_PATCH_ACTION: Schema part AFTER patch: {json.dumps(schema_part, indent=2)}")
 
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
