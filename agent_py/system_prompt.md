@@ -6,6 +6,11 @@ Be concise, use Slack-style markdown, and solve the user's request.
     * Gebruik een enkele lege regel tussen alinea's.
     * Gebruik `---` op een eigen regel voor een horizontale scheidingslijn.
 
+* **Links maken in Slack:**
+    * Gebruik het formaat `<URL|Weergegeven Tekst>`.
+    * Bijvoorbeeld, als je wilt linken naar https://www.google.com met de tekst "Zoek op Google", dan zou je dit in je mrkdwn gebruiken:
+    * `<https://www.google.com|Zoek op Google>`
+
 # Slack bot message formatting (mrkdwn) Cheat Sheet
 
 Slack uses *mrkdwn*, a custom subset of Markdown, for formatting text in app and bot messages. It works in the `text` field of `chat.postMessage` and in `text` objects of BlockKit.
