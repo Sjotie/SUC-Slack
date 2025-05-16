@@ -6,53 +6,67 @@ import contextvars
 from custom_slack_agent import slack_user_id_var
 
 # --- NEW: Schema Patching Function ---
-def _patch_array_items_in_schema(schema_node):
+def _ensure_items_in_schema_recursive(schema_part, path="schema"):
     """
-    Recursively traverses a JSON schema and adds a default 'items'
+    Recursively traverses a JSON schema part and adds a default 'items'
     field for 'array' types if 'items' is missing.
+    Logs extensive details for debugging.
     """
-    if not isinstance(schema_node, dict):
+    if not isinstance(schema_part, dict):
         return
 
-    if schema_node.get("type") == "array" and "items" not in schema_node:
-        # Defaulting to array of objects. This is a common case.
-        print(f"DEBUG: Patching missing 'items' for array schema: {schema_node.get('description', 'N/A')}")
-        schema_node["items"] = {"type": "object"}
+    # Process current node if it's an array without 'items'
+    if schema_part.get("type") == "array" and "items" not in schema_part:
+        description = schema_part.get("description", "N/A")
+        print(f"DEBUG_PATCH: Missing 'items' for array at path: '{path}' (Desc: '{description}'). Adding default: {{'type': 'string'}}")
+        schema_part["items"] = {"type": "string"} # Default to array of strings
 
-    # Recursively process properties of an object
-    if "properties" in schema_node and isinstance(schema_node["properties"], dict):
-        for prop_schema in schema_node["properties"].values():
-            _patch_array_items_in_schema(prop_schema)
+    # Recursively check nested structures
+    for key, value in list(schema_part.items()):
+        new_path = f"{path}.{key}"
+        if isinstance(value, dict):
+            _ensure_items_in_schema_recursive(value, new_path)
+        elif isinstance(value, list) and key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            for i, sub_schema in enumerate(value):
+                if isinstance(sub_schema, dict):
+                    _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]")
 
-    # Recursively process items of an array (if 'items' was already present and is complex)
-    if "items" in schema_node and isinstance(schema_node["items"], dict):
-        if not (schema_node["items"].get("type") == "object" and len(schema_node["items"]) == 1):
-            _patch_array_items_in_schema(schema_node["items"])
-
-    # Recursively process for schema compositions like allOf, anyOf, oneOf
-    for keyword in ["allOf", "anyOf", "oneOf"]:
-        if keyword in schema_node and isinstance(schema_node[keyword], list):
-            for sub_schema in schema_node[keyword]:
-                _patch_array_items_in_schema(sub_schema)
-
-def patch_tool_list_schemas(tools_list):
+def patch_tool_list_schemas_V2(tools_list):
     """
     Iterates through a list of tools and patches their parameter schemas.
     """
     if not isinstance(tools_list, list):
+        print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.")
         return tools_list
 
-    for tool_def in tools_list:
+    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools.")
+    for i, tool_def in enumerate(tools_list):
         parameters_schema = None
+        tool_name_for_debug = f"tool_at_index_{i}"
+
         if isinstance(tool_def, dict):
             parameters_schema = tool_def.get("parameters")
+            tool_name_for_debug = tool_def.get("name", tool_name_for_debug)
         elif hasattr(tool_def, "parameters"):
-            parameters_schema = getattr(tool_def, "parameters")
+            parameters_schema = getattr(tool_def, "parameters", None)
+            tool_name_for_debug = getattr(tool_def, "name", tool_name_for_debug)
+        
+        if not isinstance(parameters_schema, dict):
+            continue
 
-        if isinstance(parameters_schema, dict):
-            _patch_array_items_in_schema(parameters_schema)
-            if parameters_schema.get("type") == "array" and "items" not in parameters_schema:
-                _patch_array_items_in_schema(parameters_schema)
+        print(f"DEBUG_PATCH: Processing parameters for tool: '{tool_name_for_debug}'. Schema type: {parameters_schema.get('type')}")
+        
+        if parameters_schema.get("type") == "object":
+            if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
+                for param_name, param_schema in parameters_schema["properties"].items():
+                    _ensure_items_in_schema_recursive(param_schema, f"tool:'{tool_name_for_debug}'.param:'{param_name}'")
+            else:
+                 _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_object")
+        elif parameters_schema.get("type") == "array":
+            _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
+        else:
+            _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_type")
+            
     return tools_list
 # --- END: Schema Patching Function ---
 
@@ -102,9 +116,8 @@ class FilteredMCPServerSse(MCPServerSse):
     async def list_tools(self, *args, **kwargs):
         slack_user_id = slack_user_id_var.get()
         tools = await super().list_tools(*args, **kwargs)
-        # --- NEW: Patch schemas before filtering or returning ---
-        tools = patch_tool_list_schemas(tools)
-        # --- END: Patch ---
+        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' server.")
+        tools = patch_tool_list_schemas_V2(tools)
         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
         for tool in tools:
             name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
@@ -283,13 +296,15 @@ class NotionMCPByURL(MCPServerSse):
 class PatchedMCPServerSse(MCPServerSse):
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
-        return patch_tool_list_schemas(tools)
+        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerSse).")
+        return patch_tool_list_schemas_V2(tools)
 
 # --- Patched NotionMCPByURL for local_notion_server_by_url ---
 class PatchedNotionMCPByURL(NotionMCPByURL):
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
-        return patch_tool_list_schemas(tools)
+        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedNotionMCPByURL).")
+        return patch_tool_list_schemas_V2(tools)
 
 # --- Instantiate your new server class in mcp_servers.py ---
 primary_railway_mcp_server = PatchedMCPServerSse(
