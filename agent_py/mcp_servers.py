@@ -87,15 +87,34 @@ def patch_tool_list_schemas_V2(tools_list):
     print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - FORCED PARAM SCHEMA LOGGING).", flush=True)
     for i, tool_def in enumerate(tools_list):
         parameters_schema = None
-        tool_name_for_debug = f"tool_at_index_{i}"
+        tool_name_for_debug = f"tool_at_index_{i}" # Default tool name for logging
 
         if isinstance(tool_def, dict):
+            # If tool_def is a dictionary, try to get 'name' and 'parameters'
+            tool_name_for_debug = tool_def.get("name", f"tool_dict_at_index_{i}")
             parameters_schema = tool_def.get("parameters")
-            tool_name_for_debug = tool_def.get("name", tool_name_for_debug)
-        elif hasattr(tool_def, "parameters"):
-            parameters_schema = getattr(tool_def, "parameters", None)
-            tool_name_for_debug = getattr(tool_def, "name", tool_name_for_debug)
-        
+            # Fallback for dicts that might use inputSchema, though less common for pure dicts
+            if parameters_schema is None and "inputSchema" in tool_def:
+                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is a dict, using 'inputSchema' as parameters_schema.", flush=True)
+                parameters_schema = tool_def.get("inputSchema")
+        elif hasattr(tool_def, "name"): # For Tool objects or similar
+            tool_name_for_debug = getattr(tool_def, "name", f"tool_obj_at_index_{i}")
+            if hasattr(tool_def, "inputSchema"):
+                parameters_schema = getattr(tool_def, "inputSchema", None)
+                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is an object, using 'inputSchema' attribute for parameters. Type: {type(parameters_schema)}", flush=True)
+            elif hasattr(tool_def, "parameters"): # Fallback if it's an object with 'parameters'
+                parameters_schema = getattr(tool_def, "parameters", None)
+                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is an object, using 'parameters' attribute for parameters. Type: {type(parameters_schema)}", flush=True)
+            else:
+                print(f"DEBUG_PATCH_WARN: Tool '{tool_name_for_debug}' is an object but has neither 'inputSchema' nor 'parameters' attribute.", flush=True)
+        else:
+            # Fallback if tool_def is neither a dict nor a recognizable Tool object
+            print(f"DEBUG_PATCH_WARN: Tool at index {i} is of unrecognized type '{type(tool_def)}'. Attempting to get 'name' and 'parameters' by common fallbacks.", flush=True)
+            if hasattr(tool_def, "get"): # Check if it behaves like a dict
+                tool_name_for_debug = tool_def.get("name", tool_name_for_debug)
+                parameters_schema = tool_def.get("parameters") or tool_def.get("inputSchema")
+            # else: parameters_schema remains None
+
         if not isinstance(parameters_schema, dict):
             print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' has no valid parameters schema (or not a dict). Type: {type(parameters_schema)}. Skipping its params.", flush=True)
             print(f"RAW_TOOL_OBJECT: {repr(tool_def)}", flush=True)
@@ -130,6 +149,20 @@ def patch_tool_list_schemas_V2(tools_list):
             # If no 'properties' and not empty, log its type to see what it is
             print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema has no 'properties' and is not empty. Type: '{parameters_schema.get('type')}'. Schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
 
+        # --- Patch empty or missing-type parameter schemas ---
+        current_schema_type_for_iteration = parameters_schema.get('type')
+        if current_schema_type_for_iteration == "object" and "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
+            for param_name, param_schema_dict_val in list(parameters_schema["properties"].items()):
+                if isinstance(param_schema_dict_val, dict) and not param_schema_dict_val:
+                    print(f"DEBUG_PATCH_FIX_EMPTY_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' was {{}}. Defaulting to {{'type': 'string', 'description': 'Patched: Was an empty schema'}}.", flush=True)
+                    parameters_schema["properties"][param_name] = {"type": "string", "description": "Patched: Was an empty schema"}
+                elif isinstance(param_schema_dict_val, dict) and "type" not in param_schema_dict_val and param_schema_dict_val:
+                    if not any(k in param_schema_dict_val for k in ["allOf", "anyOf", "oneOf", "not", "$ref"]):
+                        print(f"DEBUG_PATCH_FIX_MISSING_TYPE_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' is a dict but missing 'type'. Defaulting to 'string'. Original: {json.dumps(param_schema_dict_val)}", flush=True)
+                        original_desc = param_schema_dict_val.get("description", "Patched: Was a dict missing type")
+                        parameters_schema["properties"][param_name] = {"type": "string", "description": original_desc, **param_schema_dict_val}
+                        parameters_schema["properties"][param_name].pop("type", None)
+                        parameters_schema["properties"][param_name]["type"] = "string"
 
         current_schema_type_for_iteration = parameters_schema.get('type')
         if current_schema_type_for_iteration == "object":
@@ -155,7 +188,6 @@ def patch_tool_list_schemas_V2(tools_list):
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
         else:
             print(f"DEBUG_PATCH: Parameters schema for '{tool_name_for_debug}' (type: {current_schema_type_for_iteration}) not an 'object' with properties or 'array'. Full schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
-            # If it's a dict but not object/array, still try to dive in case of unusual structure
             if isinstance(parameters_schema, dict):
                 _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_structure")
 
