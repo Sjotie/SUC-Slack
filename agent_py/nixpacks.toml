@@ -5,6 +5,7 @@ providers = ["...", "node"]
 # (optional) pin the Node major version the HubSpot MCP needs
 [variables]
 NIXPACKS_NODE_VERSION = "20"
+NIXPACKS_PYTHON_VERSION = "3.11"
 
 # (optional but recommended) make sure the container still starts your Python API
 [start]
