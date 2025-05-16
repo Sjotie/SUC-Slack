@@ -98,6 +98,7 @@ def patch_tool_list_schemas_V2(tools_list):
         
         if not isinstance(parameters_schema, dict):
             print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' has no valid parameters schema (or not a dict). Type: {type(parameters_schema)}. Skipping its params.", flush=True)
+            print(f"RAW_TOOL_OBJECT: {repr(tool_def)}", flush=True)
             continue
 
         # --- Log the entire parameters_schema for this tool BEFORE any modifications in this function ---
