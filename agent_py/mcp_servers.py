@@ -69,7 +69,7 @@ def patch_tool_list_schemas_V2(tools_list):
         print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.")
         return tools_list
 
-    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - MORE AGGRESSIVE PARAM LOGGING).")
+    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - LOGGING ENTIRE PROBLEMATIC SCHEMAS).")
     for i, tool_def in enumerate(tools_list):
         parameters_schema = None
         tool_name_for_debug = f"tool_at_index_{i}"
@@ -84,33 +84,43 @@ def patch_tool_list_schemas_V2(tools_list):
         if not isinstance(parameters_schema, dict):
             continue
 
-        # Ensure main parameters schema is type object (if it has properties or is empty)
+        # --- LOG ENTIRE PARAMETERS SCHEMA FOR KNOWN PROBLEMATIC TOOL NAMES ---
+        problematic_tool_names = [
+            "query-database",
+            "create-page",
+            "create-database",
+            "update-database",
+            "append-block-children"
+        ]
+        if tool_name_for_debug in problematic_tool_names:
+            print(f"\nRAW_SCHEMA_LOG: ----- Tool: '{tool_name_for_debug}' -----")
+            print(f"RAW_SCHEMA_LOG: Parameters schema BEFORE ANY V2 patching: {json.dumps(parameters_schema, indent=2, default=str)}")
+        # --- END LOG ---
+
+        # Step 1: Basic schema type enforcement (as before)
         if "properties" in parameters_schema:
-            if parameters_schema.get("type") != "object":
+            if not parameters_schema.get("type"):
+                parameters_schema["type"] = "object"
+            elif parameters_schema.get("type") != "object":
                 parameters_schema["type"] = "object"
         elif not parameters_schema:
              parameters_schema.update({"type": "object", "properties": {}})
-
-        current_schema_type = parameters_schema.get('type')
-        if current_schema_type == "object":
+        
+        # Step 2: Iterate and call recursive helper (as before)
+        current_schema_type_for_iteration = parameters_schema.get('type')
+        if current_schema_type_for_iteration == "object":
             if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
                 for param_name, param_schema_dict in parameters_schema["properties"].items():
                     path_for_recursive_call = f"tool:'{tool_name_for_debug}'.param:'{param_name}'"
-
-                    # --- UNCONDITIONAL LOGGING FOR EACH PARAMETER SCHEMA ---
-                    print(f"\nINSPECT_PARAM_SCHEMA: ----- Tool='{tool_name_for_debug}', Param='{param_name}' -----")
-                    print(f"INSPECT_PARAM_SCHEMA: Type of param_schema_dict: {type(param_schema_dict)}")
-                    print(f"INSPECT_PARAM_SCHEMA: Value BEFORE calling _ensure_items_in_schema_recursive: {json.dumps(param_schema_dict, indent=2, default=str)}\n")
-                    # --- END UNCONDITIONAL LOGGING ---
-
                     _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
-
-                    # --- UNCONDITIONAL LOGGING AFTER RECURSIVE CALL ---
-                    print(f"INSPECT_PARAM_SCHEMA: Param='{param_name}', Value AFTER _ensure_items_in_schema_recursive: {json.dumps(param_schema_dict, indent=2, default=str)}")
-                    print(f"INSPECT_PARAM_SCHEMA: ---------------------------------------------------------------------\n")
-                    # --- END UNCONDITIONAL LOGGING ---
-        elif current_schema_type == "array":
+        elif current_schema_type_for_iteration == "array":
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
+
+        # --- LOG ENTIRE PARAMETERS SCHEMA AFTER ALL PATCHING FOR THIS TOOL ---
+        if tool_name_for_debug in problematic_tool_names:
+            print(f"RAW_SCHEMA_LOG: Parameters schema for '{tool_name_for_debug}' AFTER ALL V2 patching: {json.dumps(parameters_schema, indent=2, default=str)}")
+            print(f"RAW_SCHEMA_LOG: -------------------------------------------\n")
+        # --- END LOG ---
     return tools_list
 # --- END: Schema Patching Function ---
 
