@@ -20,8 +20,8 @@ set_tracing_disabled(True)                 # silence 401 tracing errors
 from mcp_servers import (
     primary_railway_mcp_server,
     eu2_make_mcp_server,
-    slack_mcp_server,
-    hubspot_mcp_server,
+    # slack_mcp_server,
+    # hubspot_mcp_server,
     local_notion_server_by_url,
 )
 
@@ -94,8 +94,8 @@ current_mcp_servers = [
     primary_railway_mcp_server,
     eu2_make_mcp_server,
     local_notion_server_by_url,
-    hubspot_mcp_server,
-    slack_mcp_server,
+    # hubspot_mcp_server,
+    # slack_mcp_server,
 ]
 for server_idx, server_instance in enumerate(current_mcp_servers):
     print(f"MCP Server [{server_idx}] Name: {getattr(server_instance, 'name', 'N/A')}, Type: {type(server_instance)}")
