@@ -95,6 +95,13 @@ railway_mcp_server = MCPServerSse(
     cache_tools_list=True
 )
 
+# --- Patched MCPServerSse for primary_railway_mcp_server ---
+class PatchedMCPServerSse(MCPServerSse):
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerSse).")
+        return patch_tool_list_schemas_V2(tools)
+
 primary_railway_mcp_server = PatchedMCPServerSse(
     name="primary_railway",
     params={"url": primary_railway_server_url},
