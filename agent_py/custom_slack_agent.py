@@ -21,6 +21,7 @@ from mcp_servers import (
     eu2_make_mcp_server,
     slack_mcp_server,
     hubspot_mcp_server,
+    local_notion_server_by_url,
 )
 
 from datetime import datetime
@@ -91,7 +92,13 @@ _agent = Agent(
     name="SlackAssistant",
     model=agent_model_name_from_env,
     instructions=system_prompt,
-    mcp_servers=[primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server, hubspot_mcp_server],
+    mcp_servers=[
+        primary_railway_mcp_server,
+        eu2_make_mcp_server,
+        slack_mcp_server,
+        hubspot_mcp_server,
+        local_notion_server_by_url
+    ],
     model_settings=custom_model_settings
 )
 

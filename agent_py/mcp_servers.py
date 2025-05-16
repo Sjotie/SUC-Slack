@@ -1,8 +1,20 @@
 import os
+import json
 from agents.mcp import MCPServerSse, MCPServerStdio
 
 import contextvars
 from custom_slack_agent import slack_user_id_var
+
+# --- User Config: How your Python agent maps Slack IDs to URL Tokens ---
+# These tokens will be part of the URL and must match what your Node.js
+# server expects in getNotionApiKeyForUserToken (e.g., "sjoerd_token")
+SLACK_ID_TO_URL_TOKEN_MAP = {
+    "U08K6QFBPB9": "sjoerd_url_token", # This token will be used in the URL
+    "U07G1UMQ64C": "wouter_url_token",
+    "U08K4SFL5LP": "leonie_url_token",
+    # Ensure Node.js server has corresponding SJOERD_URL_TOKEN_NOTION_API_KEY, etc.
+}
+DEFAULT_URL_TOKEN = "default_user_token" # Fallback token
 
 # --- MCP Server Definitions ---
 
@@ -142,12 +154,85 @@ slack_mcp_server = MCPServerStdio(
     client_session_timeout_seconds=60.0,
 )
 
+# --- Node.js Notion MCP Server (URL-based user token) ---
+class NotionMCPByURL(MCPServerSse):
+    def __init__(self, name: str, base_server_url: str, **kwargs):
+        self.base_server_url = base_server_url.rstrip('/') # e.g., http://127.0.0.1:8080/mcp
+        self._dynamic_params = None # Will hold params with the dynamic URL
+        
+        # Initialize super with placeholder params.
+        # The actual URL will be determined dynamically in connect().
+        super().__init__(name=name, params={"url": "http://placeholder.com/mcp/invalid"}, **kwargs)
+        print(f"INFO ({self.name}): Initialized for URL-based user tokens.")
+        print(f"INFO ({self.name}): IMPORTANT - SDK's handling of 202 Accepted + SSE responses still applies.")
+
+    def _get_user_specific_url(self):
+        current_slack_user_id = slack_user_id_var.get()
+        user_token = DEFAULT_URL_TOKEN
+        if current_slack_user_id:
+            token_from_map = SLACK_ID_TO_URL_TOKEN_MAP.get(current_slack_user_id)
+            if token_from_map:
+                user_token = token_from_map
+                print(f"DEBUG ({self.name}): Using URL token '{user_token}' for Slack user {current_slack_user_id}.")
+            else:
+                print(f"WARNING ({self.name}): No URL token for Slack user {current_slack_user_id}. Using default token '{user_token}'.")
+        else:
+            print(f"WARNING ({self.name}): No Slack user ID in context. Using default URL token '{user_token}'.")
+        
+        return f"{self.base_server_url}/{user_token}" # e.g., http://127.0.0.1:8080/mcp/sjoerd_url_token
+
+    # Override connect to set the dynamic URL before the actual connection happens
+    async def connect(self):
+        dynamic_url_for_connection = self._get_user_specific_url()
+        
+        # The `params` attribute is used by the base class's connect/create_streams method.
+        # We need to update it here.
+        if not hasattr(self, 'params') or self.params is None:
+            self.params = {}
+        self.params['url'] = dynamic_url_for_connection
+        # If you needed static headers for the GET SSE connection, set them here:
+        # self.params['headers'] = {"Some-Static-Header": "Value"}
+        
+        print(f"DEBUG ({self.name}): Attempting to connect to: {self.params['url']}")
+        try:
+            await super().connect()
+            print(f"DEBUG ({self.name}): Successfully connected to {self.params['url']}.")
+        except Exception as e:
+            print(f"ERROR ({self.name}): Failed to connect to {self.params['url']}: {e}")
+            raise
+
+    # The `initialize` method in this class no longer needs to inject notionApiKey
+    # into initializationOptions, as the Node.js server derives it from the URL token.
+    # We can rely on the base class's `initialize` method.
+    # If you need to pass *other* initializationOptions, you can still override it.
+    async def initialize(self, capabilities=None, client_info=None, initialization_options=None, **kwargs):
+        print(f"DEBUG ({self.name}): Calling super().initialize (URL token identifies user). Options from agent: {initialization_options}")
+        # The Node.js server will extract user context from the URL token.
+        # Any `initialization_options` passed here by the agent framework will still be sent.
+        return await super().initialize(capabilities, client_info, initialization_options, **kwargs)
+
+    # list_tools and call_tool will use the base class implementations.
+    # The main challenge for them is that the SDK's SseClientTransport must POST
+    # messages to the correct unique URL (e.g., http://.../mcp/USER_TOKEN)
+    # if that's how your Node.js POST route is defined.
+    # If the SDK always POSTs messages to the *original base URL without the token path*,
+    # then your Node.js POST route must be `/mcp` and it would need the `X-MCP-Session-ID` again,
+    # which this Python class isn't currently set up to send easily.
+
+# --- Instantiate your new server class in mcp_servers.py ---
+local_notion_server_by_url = NotionMCPByURL(
+    name="local_notion_via_url",
+    base_server_url="http://127.0.0.1:8080/mcp", # Base path, token will be appended
+    client_session_timeout_seconds=60.0,
+    cache_tools_list=False
+)
+
 # --- Log all available tools from each MCP server at startup ---
 import asyncio
 
 async def log_all_mcp_tools():
     print("INFO: Listing all available tools from each MCP server (after connect)...")
-    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server]:
+    for mcp_server in [primary_railway_mcp_server, eu2_make_mcp_server, slack_mcp_server, local_notion_server_by_url]:
         try:
             await mcp_server.connect()
             tools = await mcp_server.list_tools()
