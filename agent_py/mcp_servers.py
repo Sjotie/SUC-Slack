@@ -9,10 +9,13 @@ from custom_slack_agent import slack_user_id_var
 # --- NEW: Schema Patching Function ---
 import json
 
-def _ensure_items_in_schema_recursive(schema_part, path="schema"):
-    print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} !!!!!!!!!", flush=True)
+def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_depth=8):
+    print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} (depth={depth}) !!!!!!!!!", flush=True)
     # --- Log EVERY entry into this function ---
-    print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}'")
+    print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}', Depth={depth}")
+    if depth > max_depth:
+        print(f"WARNING: Max schema recursion depth ({max_depth}) exceeded at path '{path}'. Stopping recursion to avoid excessive nesting.", flush=True)
+        return
     if isinstance(schema_part, dict):
         print(f"ENTER_RECURSE_DICT_CONTENT: {json.dumps(schema_part, indent=2)}")
     else:
@@ -72,11 +75,11 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema"):
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
         if isinstance(value, dict):
-            _ensure_items_in_schema_recursive(value, new_path)
+            _ensure_items_in_schema_recursive(value, new_path, depth=depth+1, max_depth=max_depth)
         elif isinstance(value, list) and key in ("allOf", "anyOf", "oneOf", "prefixItems"):
             for i, sub_schema in enumerate(value):
                 if isinstance(sub_schema, dict):
-                    _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]")
+                    _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]", depth=depth+1, max_depth=max_depth)
 
 def patch_tool_list_schemas_V2(tools_list):
     print(f"!!!!!!!!!! ENTERED patch_tool_list_schemas_V2 with {len(tools_list) if isinstance(tools_list, list) else 'NON-LIST OBJECT'} tools !!!!!!!!!", flush=True)
