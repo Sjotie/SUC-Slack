@@ -29,6 +29,9 @@ try:
 except ModuleNotFoundError:
     from openai_agents import Runner   # fallback for some installs
     from openai_agents.exceptions import ModelBehaviorError
+import litellm
+litellm.set_verbose = True
+
 from custom_slack_agent import _agent, ACTIVE_MCP_SERVERS
 
 from openai.types.responses import ResponseTextDeltaEvent

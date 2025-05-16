@@ -88,17 +88,21 @@ custom_model_settings = ModelSettings(
     # temperature=0.7
 )
 
+print("--- Initializing Agent with MCP Servers ---")
+current_mcp_servers = [
+    primary_railway_mcp_server,
+    eu2_make_mcp_server,
+    local_notion_server_by_url
+]
+for server_idx, server_instance in enumerate(current_mcp_servers):
+    print(f"MCP Server [{server_idx}] Name: {getattr(server_instance, 'name', 'N/A')}, Type: {type(server_instance)}")
+print("------------------------------------------")
+
 _agent = Agent(
     name="SlackAssistant",
     model=agent_model_name_from_env,
     instructions=system_prompt,
-    mcp_servers=[
-        primary_railway_mcp_server,
-        eu2_make_mcp_server,
-        # slack_mcp_server,
-        # hubspot_mcp_server,
-        local_notion_server_by_url
-    ],
+    mcp_servers=current_mcp_servers,
     model_settings=custom_model_settings
 )
 

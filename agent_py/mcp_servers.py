@@ -6,22 +6,23 @@ import contextvars
 from custom_slack_agent import slack_user_id_var
 
 # --- NEW: Schema Patching Function ---
+import json
+
 def _ensure_items_in_schema_recursive(schema_part, path="schema"):
-    """
-    Recursively traverses a JSON schema part and adds a default 'items'
-    field for 'array' types if 'items' is missing.
-    Logs extensive details for debugging.
-    """
     if not isinstance(schema_part, dict):
         return
 
-    # Process current node if it's an array without 'items'
-    if schema_part.get("type") == "array" and "items" not in schema_part:
-        description = schema_part.get("description", "N/A")
-        print(f"DEBUG_PATCH: Missing 'items' for array at path: '{path}' (Desc: '{description}'). Adding default: {{'type': 'string'}}")
-        schema_part["items"] = {"type": "string"} # Default to array of strings
+    is_array_type = schema_part.get("type") == "array"
+    has_items = "items" in schema_part
 
-    # Recursively check nested structures
+    if is_array_type:
+        if not has_items:
+            description = schema_part.get("description", "N/A")
+            print(f"DEBUG_PATCH_ACTION: >>> Adding 'items': {{'type': 'string'}} to array at path: '{path}' (Desc: '{description}')")
+            print(f"DEBUG_PATCH_ACTION: Schema part BEFORE patch: {json.dumps(schema_part, indent=2)}")
+            schema_part["items"] = {"type": "string"}
+            print(f"DEBUG_PATCH_ACTION: Schema part AFTER patch: {json.dumps(schema_part, indent=2)}")
+
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
         if isinstance(value, dict):
