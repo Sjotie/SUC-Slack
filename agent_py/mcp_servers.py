@@ -5,6 +5,57 @@ from agents.mcp import MCPServerSse, MCPServerStdio
 import contextvars
 from custom_slack_agent import slack_user_id_var
 
+# --- NEW: Schema Patching Function ---
+def _patch_array_items_in_schema(schema_node):
+    """
+    Recursively traverses a JSON schema and adds a default 'items'
+    field for 'array' types if 'items' is missing.
+    """
+    if not isinstance(schema_node, dict):
+        return
+
+    if schema_node.get("type") == "array" and "items" not in schema_node:
+        # Defaulting to array of objects. This is a common case.
+        print(f"DEBUG: Patching missing 'items' for array schema: {schema_node.get('description', 'N/A')}")
+        schema_node["items"] = {"type": "object"}
+
+    # Recursively process properties of an object
+    if "properties" in schema_node and isinstance(schema_node["properties"], dict):
+        for prop_schema in schema_node["properties"].values():
+            _patch_array_items_in_schema(prop_schema)
+
+    # Recursively process items of an array (if 'items' was already present and is complex)
+    if "items" in schema_node and isinstance(schema_node["items"], dict):
+        if not (schema_node["items"].get("type") == "object" and len(schema_node["items"]) == 1):
+            _patch_array_items_in_schema(schema_node["items"])
+
+    # Recursively process for schema compositions like allOf, anyOf, oneOf
+    for keyword in ["allOf", "anyOf", "oneOf"]:
+        if keyword in schema_node and isinstance(schema_node[keyword], list):
+            for sub_schema in schema_node[keyword]:
+                _patch_array_items_in_schema(sub_schema)
+
+def patch_tool_list_schemas(tools_list):
+    """
+    Iterates through a list of tools and patches their parameter schemas.
+    """
+    if not isinstance(tools_list, list):
+        return tools_list
+
+    for tool_def in tools_list:
+        parameters_schema = None
+        if isinstance(tool_def, dict):
+            parameters_schema = tool_def.get("parameters")
+        elif hasattr(tool_def, "parameters"):
+            parameters_schema = getattr(tool_def, "parameters")
+
+        if isinstance(parameters_schema, dict):
+            _patch_array_items_in_schema(parameters_schema)
+            if parameters_schema.get("type") == "array" and "items" not in parameters_schema:
+                _patch_array_items_in_schema(parameters_schema)
+    return tools_list
+# --- END: Schema Patching Function ---
+
 # --- User Config: How your Python agent maps Slack IDs to URL Tokens ---
 # These tokens will be part of the URL and must match what your Node.js
 # server expects in getNotionApiKeyForUserToken (e.g., "sjoerd_token")
@@ -51,6 +102,9 @@ class FilteredMCPServerSse(MCPServerSse):
     async def list_tools(self, *args, **kwargs):
         slack_user_id = slack_user_id_var.get()
         tools = await super().list_tools(*args, **kwargs)
+        # --- NEW: Patch schemas before filtering or returning ---
+        tools = patch_tool_list_schemas(tools)
+        # --- END: Patch ---
         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
         for tool in tools:
             name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
@@ -225,8 +279,27 @@ class NotionMCPByURL(MCPServerSse):
     # then your Node.js POST route must be `/mcp` and it would need the `X-MCP-Session-ID` again,
     # which this Python class isn't currently set up to send easily.
 
+# --- Patched MCPServerSse for primary_railway_mcp_server ---
+class PatchedMCPServerSse(MCPServerSse):
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        return patch_tool_list_schemas(tools)
+
+# --- Patched NotionMCPByURL for local_notion_server_by_url ---
+class PatchedNotionMCPByURL(NotionMCPByURL):
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        return patch_tool_list_schemas(tools)
+
 # --- Instantiate your new server class in mcp_servers.py ---
-local_notion_server_by_url = NotionMCPByURL(
+primary_railway_mcp_server = PatchedMCPServerSse(
+    name="primary_railway",
+    params={"url": primary_railway_server_url},
+    client_session_timeout_seconds=60.0,
+    cache_tools_list=True
+)
+
+local_notion_server_by_url = PatchedNotionMCPByURL(
     name="local_notion_via_url",
     base_server_url="http://127.0.0.1:8080/mcp", # Base path, token will be appended
     client_session_timeout_seconds=60.0,
