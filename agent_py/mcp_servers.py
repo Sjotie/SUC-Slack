@@ -187,6 +187,7 @@ def patch_tool_list_schemas_V2(tools_list):
                     _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
             else:
                 # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' (type object) has no 'properties' dict OR 'properties' is not a dict. Properties: {parameters_schema.get('properties')}", flush=True)
+                pass
         elif current_schema_type_for_iteration == "array":
             # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' params is type 'array'. Path: tool:'{tool_name_for_debug}'.params_direct_array", flush=True)
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
