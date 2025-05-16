@@ -463,7 +463,7 @@ primary_railway_mcp_server = PatchedMCPServerSse(
 
 local_notion_server_by_url = PatchedNotionMCPByURL(
     name="local_notion_via_url",
-    base_server_url="http://127.0.0.1:8080/mcp", # Base path, token will be appended
+    base_server_url="https://notion-mcp.fly.dev/mcp", # Base path, token will be appended
     client_session_timeout_seconds=60.0,
     cache_tools_list=False
 )
