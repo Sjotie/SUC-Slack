@@ -10,16 +10,17 @@ from custom_slack_agent import slack_user_id_var
 import json
 
 def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_depth=8):
-    print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} (depth={depth}) !!!!!!!!!", flush=True)
-    # --- Log EVERY entry into this function ---
-    print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}', Depth={depth}")
+    # print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} (depth={depth}) !!!!!!!!!", flush=True)
+    # print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}', Depth={depth}")
     if depth > max_depth:
         print(f"WARNING: Max schema recursion depth ({max_depth}) exceeded at path '{path}'. Stopping recursion to avoid excessive nesting.", flush=True)
         return
-    if isinstance(schema_part, dict):
-        print(f"ENTER_RECURSE_DICT_CONTENT: {json.dumps(schema_part, indent=2)}")
-    else:
-        print(f"ENTER_RECURSE_NON_DICT_CONTENT: {str(schema_part)[:200]}")
+    if depth > 5:
+        print(f"NOTICE: _ensure_items_in_schema_recursive nesting level {depth} at path '{path}'", flush=True)
+    # if isinstance(schema_part, dict):
+    #     print(f"ENTER_RECURSE_DICT_CONTENT: {json.dumps(schema_part, indent=2)}")
+    # else:
+    #     print(f"ENTER_RECURSE_NON_DICT_CONTENT: {str(schema_part)[:200]}")
     # --- End Log EVERY entry ---
 
     if not isinstance(schema_part, dict):
@@ -52,25 +53,25 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_d
 
     needs_items_patch = is_array_type and items_is_missing_or_invalid
 
-    if is_array_type:
-        print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
-        print(f"DETAILED_INSPECT_ARRAY: Current schema_part: {json.dumps(schema_part, indent=2)}")
-        print(f"DETAILED_INSPECT_ARRAY: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
-        print(f"DETAILED_INSPECT_ARRAY: Is 'items' key missing? {'items' not in schema_part}")
-        print(f"DETAILED_INSPECT_ARRAY: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
-        print(f"DETAILED_INSPECT_ARRAY: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
-        print(f"DETAILED_INSPECT_ARRAY: Calculated 'needs_items_patch': {needs_items_patch}")
+    # if is_array_type:
+    #     print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Current schema_part: {json.dumps(schema_part, indent=2)}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Is 'items' key missing? {'items' not in schema_part}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
+    #     print(f"DETAILED_INSPECT_ARRAY: Calculated 'needs_items_patch': {needs_items_patch}")
 
     if needs_items_patch:
-        description_content = schema_part.get("description", "N/A")
-        original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
-        action_log_param_name = param_name_for_log
+        # description_content = schema_part.get("description", "N/A")
+        # original_items_val_str = json.dumps(items_value if "items" in schema_part else "KEY_NOT_PRESENT")
+        # action_log_param_name = param_name_for_log
 
-        print(f"DEBUG_PATCH_ACTION: >>> For Param/Path='{action_log_param_name}' / '{path}' (Desc: '{description_content}')")
-        print(f"DEBUG_PATCH_ACTION: Needs 'items' patch. Original 'items' value: {original_items_val_str}")
-        print(f"DEBUG_PATCH_ACTION: Schema part BEFORE 'items' patch: {json.dumps(schema_part, indent=2)}")
+        # print(f"DEBUG_PATCH_ACTION: >>> For Param/Path='{action_log_param_name}' / '{path}' (Desc: '{description_content}')")
+        # print(f"DEBUG_PATCH_ACTION: Needs 'items' patch. Original 'items' value: {original_items_val_str}")
+        # print(f"DEBUG_PATCH_ACTION: Schema part BEFORE 'items' patch: {json.dumps(schema_part, indent=2)}")
         schema_part["items"] = {"type": "string"}
-        print(f"DEBUG_PATCH_ACTION: Schema part AFTER 'items' patch: {json.dumps(schema_part, indent=2)}")
+        # print(f"DEBUG_PATCH_ACTION: Schema part AFTER 'items' patch: {json.dumps(schema_part, indent=2)}")
 
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
@@ -124,20 +125,20 @@ def patch_tool_list_schemas_V2(tools_list):
             continue
 
         # --- Log the entire parameters_schema for this tool BEFORE any modifications in this function ---
-        print(f"\n======================================================================", flush=True)
-        print(f"PROCESSING PARAMETERS FOR TOOL: '{tool_name_for_debug}' (Index: {i})", flush=True)
-        print(f"======================================================================", flush=True)
-        print(f"RAW_PARAMS_SCHEMA_LOG (PRE-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
-        if parameters_schema is None:
-            print("  Parameters schema is None.", flush=True)
-        elif not parameters_schema:
-            print("  Parameters schema is an empty dictionary {}.", flush=True)
-        else:
-            try:
-                print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
-            except Exception as e:
-                print(f"  ERROR JSON-DUMPING PRE-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
-                print(f"  RAW SCHEMA (PRE-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
+        # print(f"\n======================================================================", flush=True)
+        # print(f"PROCESSING PARAMETERS FOR TOOL: '{tool_name_for_debug}' (Index: {i})", flush=True)
+        # print(f"======================================================================", flush=True)
+        # print(f"RAW_PARAMS_SCHEMA_LOG (PRE-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
+        # if parameters_schema is None:
+        #     print("  Parameters schema is None.", flush=True)
+        # elif not parameters_schema:
+        #     print("  Parameters schema is an empty dictionary {}.", flush=True)
+        # else:
+        #     try:
+        #         print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
+        #     except Exception as e:
+        #         print(f"  ERROR JSON-DUMPING PRE-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
+        #         print(f"  RAW SCHEMA (PRE-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
         # ---
 
         # Basic schema type enforcement
@@ -157,11 +158,11 @@ def patch_tool_list_schemas_V2(tools_list):
         if current_schema_type_for_iteration == "object" and "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
             for param_name, param_schema_dict_val in list(parameters_schema["properties"].items()):
                 if isinstance(param_schema_dict_val, dict) and not param_schema_dict_val:
-                    print(f"DEBUG_PATCH_FIX_EMPTY_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' was {{}}. Defaulting to {{'type': 'string', 'description': 'Patched: Was an empty schema'}}.", flush=True)
+                    # print(f"DEBUG_PATCH_FIX_EMPTY_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' was {{}}. Defaulting to {{'type': 'string', 'description': 'Patched: Was an empty schema'}}.", flush=True)
                     parameters_schema["properties"][param_name] = {"type": "string", "description": "Patched: Was an empty schema"}
                 elif isinstance(param_schema_dict_val, dict) and "type" not in param_schema_dict_val and param_schema_dict_val:
                     if not any(k in param_schema_dict_val for k in ["allOf", "anyOf", "oneOf", "not", "$ref"]):
-                        print(f"DEBUG_PATCH_FIX_MISSING_TYPE_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' is a dict but missing 'type'. Defaulting to 'string'. Original: {json.dumps(param_schema_dict_val)}", flush=True)
+                        # print(f"DEBUG_PATCH_FIX_MISSING_TYPE_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' is a dict but missing 'type'. Defaulting to 'string'. Original: {json.dumps(param_schema_dict_val)}", flush=True)
                         original_desc = param_schema_dict_val.get("description", "Patched: Was a dict missing type")
                         parameters_schema["properties"][param_name] = {"type": "string", "description": original_desc, **param_schema_dict_val}
                         parameters_schema["properties"][param_name].pop("type", None)
@@ -170,44 +171,44 @@ def patch_tool_list_schemas_V2(tools_list):
         current_schema_type_for_iteration = parameters_schema.get('type')
         if current_schema_type_for_iteration == "object":
             if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
-                print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}': Iterating properties for items check.", flush=True)
+                # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}': Iterating properties for items check.", flush=True)
                 for param_name, param_schema_dict in parameters_schema["properties"].items():
                     path_for_recursive_call = f"tool:'{tool_name_for_debug}'.param:'{param_name}'"
                     
                     # --- Explicitly log the param_schema_dict being passed to the recursive function ---
-                    print(f"  INSPECT_CALL_TO_RECURSIVE: Tool='{tool_name_for_debug}', Param='{param_name}'", flush=True)
-                    print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict type: {type(param_schema_dict)}", flush=True)
-                    if isinstance(param_schema_dict, dict):
-                         print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {json.dumps(param_schema_dict, indent=4)}", flush=True)
-                    else:
-                         print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {str(param_schema_dict)}", flush=True)
+                    # print(f"  INSPECT_CALL_TO_RECURSIVE: Tool='{tool_name_for_debug}', Param='{param_name}'", flush=True)
+                    # print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict type: {type(param_schema_dict)}", flush=True)
+                    # if isinstance(param_schema_dict, dict):
+                    #      print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {json.dumps(param_schema_dict, indent=4)}", flush=True)
+                    # else:
+                    #      print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {str(param_schema_dict)}", flush=True)
                     # ---
                     
                     _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
             else:
-                print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' (type object) has no 'properties' dict OR 'properties' is not a dict. Properties: {parameters_schema.get('properties')}", flush=True)
+                # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' (type object) has no 'properties' dict OR 'properties' is not a dict. Properties: {parameters_schema.get('properties')}", flush=True)
         elif current_schema_type_for_iteration == "array":
-            print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' params is type 'array'. Path: tool:'{tool_name_for_debug}'.params_direct_array", flush=True)
+            # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' params is type 'array'. Path: tool:'{tool_name_for_debug}'.params_direct_array", flush=True)
             _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
         else:
-            print(f"DEBUG_PATCH: Parameters schema for '{tool_name_for_debug}' (type: {current_schema_type_for_iteration}) not an 'object' with properties or 'array'. Full schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
+            # print(f"DEBUG_PATCH: Parameters schema for '{tool_name_for_debug}' (type: {current_schema_type_for_iteration}) not an 'object' with properties or 'array'. Full schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
             if isinstance(parameters_schema, dict):
                 _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_structure")
 
 
         # --- Log the entire parameters_schema for this tool AFTER all modifications in this function ---
-        print(f"\nRAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
-        if parameters_schema is None:
-            print("  Parameters schema is None.", flush=True)
-        elif not parameters_schema:
-            print("  Parameters schema is an empty dictionary {}.", flush=True)
-        else:
-            try:
-                print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
-            except Exception as e:
-                print(f"  ERROR JSON-DUMPING POST-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
-                print(f"  RAW SCHEMA (POST-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
-        print(f"RAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): ---------------------------------------\n", flush=True)
+        # print(f"\nRAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
+        # if parameters_schema is None:
+        #     print("  Parameters schema is None.", flush=True)
+        # elif not parameters_schema:
+        #     print("  Parameters schema is an empty dictionary {}.", flush=True)
+        # else:
+        #     try:
+        #         print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
+        #     except Exception as e:
+        #         print(f"  ERROR JSON-DUMPING POST-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
+        #         print(f"  RAW SCHEMA (POST-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
+        # print(f"RAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): ---------------------------------------\n", flush=True)
         # ---
             
     return tools_list
