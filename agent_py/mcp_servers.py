@@ -95,7 +95,7 @@ railway_mcp_server = MCPServerSse(
     cache_tools_list=True
 )
 
-primary_railway_mcp_server = MCPServerSse(
+primary_railway_mcp_server = PatchedMCPServerSse(
     name="primary_railway",
     params={"url": primary_railway_server_url},
     client_session_timeout_seconds=60.0,
