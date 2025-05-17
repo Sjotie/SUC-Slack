@@ -83,8 +83,8 @@ if not agent_model_name_from_env.startswith("litellm/"):
 # Set a safe default for max_tokens to avoid model errors.
 # Claude 3 Sonnet max is 64,000, GPT-4o is 128,000, most OpenAI models are 4,096-128,000.
 # You may want to make this dynamic per model in the future.
-desired_max_tokens = 64000
-print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent (Claude 3 Sonnet safe limit).")
+desired_max_tokens = 8000
+print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent (8k limit).")
 
 # Construct the thinking parameter for Anthropic
 # anthropic_thinking_params = {
