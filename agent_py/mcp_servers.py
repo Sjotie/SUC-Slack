@@ -7,6 +7,8 @@ from agents.mcp import MCPServerSse, MCPServerStdio
 import contextvars
 from custom_slack_agent import slack_user_id_var
 
+import pathlib  # Add this import
+
 # --- NEW: Schema Patching Function ---
 import json
 
@@ -345,6 +347,10 @@ class PatchedMCPServerStdio(MCPServerStdio):
         print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerStdio).")
         return patch_tool_list_schemas_V2(tools)
 
+# Ensure a unique config directory for HubSpot MCP
+hubspot_config_path = pathlib.Path(os.getcwd()) / ".mcp_configs" / "hubspot"
+hubspot_config_path.mkdir(parents=True, exist_ok=True)
+
 hubspot_mcp_server = PatchedMCPServerStdio(
     name="hubspot",
     params={
@@ -356,7 +362,7 @@ hubspot_mcp_server = PatchedMCPServerStdio(
         ),
         "env": {
             "PRIVATE_APP_ACCESS_TOKEN": hubspot_mcp_token or "",
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or os.getenv("XDG_CONFIG_HOME") or "/tmp",
+            "XDG_CONFIG_HOME": str(hubspot_config_path),
         }
     },
     client_session_timeout_seconds=120.0,
