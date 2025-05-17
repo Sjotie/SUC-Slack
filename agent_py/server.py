@@ -106,17 +106,52 @@ def format_message_content_for_agents_sdk(content_input: Union[str, List[Dict[st
                 sdk_formatted_parts.append({"type": "input_text", "text": str(text_value)})
         elif item_type_original in ("input_image", "image_url"):
             image_url_value = item_dict.get("image_url")
-            if isinstance(image_url_value, str) and image_url_value.startswith(("data:image/", "http://", "https://")):
-                sdk_formatted_parts.append({"type": "input_image", "image_url": image_url_value})
-            elif isinstance(image_url_value, dict) and "url" in image_url_value:
-                print(f"PY_AGENT_WARNING (format_content): Received nested image_url object, using inner url for input_image.")
-                actual_url = image_url_value["url"]
-                if isinstance(actual_url, str) and actual_url.startswith(("data:image/", "http://", "https://")):
-                    sdk_formatted_parts.append({"type": "input_image", "image_url": actual_url})
+            if isinstance(image_url_value, str):
+                # --- START MODIFICATION ---
+                # Standardize 'image/jpg' to 'image/jpeg'
+                if image_url_value.startswith("data:image/jpg;base64,"):
+                    image_url_value = image_url_value.replace("data:image/jpg;base64,", "data:image/jpeg;base64,", 1)
+                # If it's just raw base64 without a data URI prefix and also not an http/https URL
+                elif not image_url_value.startswith("data:image/") and \
+                     not image_url_value.startswith("http://") and \
+                     not image_url_value.startswith("https://"):
+                    print(f"PY_AGENT_WARNING (format_content): Raw base64 string detected, defaulting to data:image/jpeg;base64. Original start: {image_url_value[:30]}")
+                    image_url_value = "data:image/jpeg;base64," + image_url_value
+                # --- END MODIFICATION ---
+
+                # Now check against allowed types (including http/https URLs)
+                if image_url_value.startswith(("data:image/jpeg;base64,", 
+                                               "data:image/png;base64,", 
+                                               "data:image/gif;base64,", 
+                                               "data:image/webp;base64,",
+                                               "http://", 
+                                               "https://")):
+                    sdk_formatted_parts.append({"type": "input_image", "image_url": image_url_value})
                 else:
-                    print(f"PY_AGENT_WARNING (format_content): Inner URL of image_url object is not a valid string: {actual_url}")
+                    print(f"PY_AGENT_WARNING (format_content): Image URL does not have a valid/allowed MIME type or scheme after attempted standardization: {image_url_value[:70]}...")
+            elif isinstance(image_url_value, dict) and "url" in image_url_value:
+                print(f"PY_AGENT_WARNING (format_content): Received nested image_url object, attempting to use inner url for input_image.")
+                actual_url = image_url_value["url"]
+                if isinstance(actual_url, str):
+                    if actual_url.startswith("data:image/jpg;base64,"):
+                        actual_url = actual_url.replace("data:image/jpg;base64,", "data:image/jpeg;base64,", 1)
+                    if not actual_url.startswith("data:image/") and \
+                       not actual_url.startswith("http://") and \
+                       not actual_url.startswith("https://"):
+                        print(f"PY_AGENT_WARNING (format_content): Raw base64 string in nested URL, defaulting to data:image/jpeg;base64. Original start: {actual_url[:30]}")
+                        actual_url = "data:image/jpeg;base64," + actual_url
+                    if actual_url.startswith(("data:image/jpeg;base64,", 
+                                              "data:image/png;base64,", 
+                                              "data:image/gif;base64,", 
+                                              "data:image/webp;base64,",
+                                              "http://", "https://")):
+                        sdk_formatted_parts.append({"type": "input_image", "image_url": actual_url})
+                    else:
+                        print(f"PY_AGENT_WARNING (format_content): Inner URL of image_url object is not a valid string or recognized type after standardization: {actual_url[:70]}")
+                else:
+                    print(f"PY_AGENT_WARNING (format_content): Inner URL of image_url object is not a string: {type(actual_url)}")
             else:
-                print(f"PY_AGENT_WARNING (format_content): Invalid image_url value for input_image: {image_url_value}")
+                print(f"PY_AGENT_WARNING (format_content): Invalid image_url value or structure for input_image: {type(image_url_value)}")
         else:
             print(f"PY_AGENT_WARNING (format_content): Unknown original content part type: {item_type_original}")
 
