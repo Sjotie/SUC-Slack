@@ -533,7 +533,33 @@ async def generate_stream(req: ChatRequest, request: Request):
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
-        print(f"PY_AGENT_DEBUG (/generate): Last cleaned message (current user prompt part): {str(cleaned_messages[-1])[:500]}...")
+        # Truncate any base64 image data in the log for readability
+        def truncate_image_data(msg):
+            if isinstance(msg, dict) and "content" in msg and isinstance(msg["content"], list):
+                new_content = []
+                for part in msg["content"]:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "image_url"
+                        and isinstance(part.get("image_url"), dict)
+                        and "url" in part["image_url"]
+                        and isinstance(part["image_url"]["url"], str)
+                        and part["image_url"]["url"].startswith("data:image/")
+                    ):
+                        url_val = part["image_url"]["url"]
+                        truncated_url = url_val[:60] + "...[truncated]" if len(url_val) > 80 else url_val
+                        new_part = dict(part)
+                        new_part["image_url"] = dict(part["image_url"])
+                        new_part["image_url"]["url"] = truncated_url
+                        new_content.append(new_part)
+                    else:
+                        new_content.append(part)
+                msg = dict(msg)
+                msg["content"] = new_content
+            return msg
+
+        last_msg = cleaned_messages[-1]
+        print(f"PY_AGENT_DEBUG (/generate): Last cleaned message (current user prompt part): {truncate_image_data(last_msg)}")
 
     # Per-request MCP connection check and re-establishment
     if ACTIVE_MCP_SERVERS:
