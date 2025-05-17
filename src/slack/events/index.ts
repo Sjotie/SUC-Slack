@@ -232,51 +232,68 @@ async function processMessageAndGenerateResponse(
                 case 'tool_calls': {
                     const textBeforeTool = rawResponseBuffer.trim();
                     if (textBeforeTool && lastMessageTs) {
+                        // If there was text being streamed before the tool call, finalize it.
                         const isMidThinkPreTool = blockKit.isMidThinkBlock(textBeforeTool);
                         const preToolPayload = blockKit.aiResponseMessage(textBeforeTool, isMidThinkPreTool);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, lastMessageTs, preToolPayload.blocks as any[], preToolPayload.text);
-                        conversationUtils.addAssistantMessageToThread(threadInfo, textBeforeTool);
+                        conversationUtils.addAssistantMessageToThread(threadInfo, textBeforeTool); // Save this part of AI response
                         logger.debug(`${logEmoji.slack} Flushed content to ${lastMessageTs} before tool call.`);
+                        lastMessageTs = undefined; // Ensure the tool call message is a new post
+                    } else if (textBeforeTool && !lastMessageTs) {
+                        // If there was text but no message posted yet (e.g. buffer filled but no flush trigger)
+                        // Post it as a new message first.
+                        const isMidThinkPreTool = blockKit.isMidThinkBlock(textBeforeTool);
+                        const preToolPayload = blockKit.aiResponseMessage(textBeforeTool, isMidThinkPreTool);
+                        const preToolPostRes = await client.chat.postMessage({
+                            channel: threadInfo.channelId,
+                            thread_ts: threadInfo.threadTs,
+                            ...preToolPayload,
+                        });
+                        if (preToolPostRes.ts) {
+                             conversationUtils.addAssistantMessageToThread(threadInfo, textBeforeTool);
+                        }
+                        logger.debug(`${logEmoji.slack} Posted pre-tool content as new message ${preToolPostRes.ts}.`);
                     }
-                    rawResponseBuffer = '';
+
+                    rawResponseBuffer = ''; // Clear buffer for any text *after* this tool call cycle
                     charsSinceLastFlushInSegment = 0;
 
                     let toolNameFromEvent: string | undefined;
                     let argPreview: string = '';
-
+                    
                     if (event.type === 'tool_calls' && Array.isArray(event.data) && event.data.length > 0) {
-                        const firstCall = event.data[0];
+                        const firstCall = event.data[0]; 
                         if (firstCall && typeof firstCall.name === 'string') {
                             toolNameFromEvent = firstCall.name;
-                            const argsForPreview = typeof firstCall.arguments === 'string'
-                                ? firstCall.arguments
+                            const argsForPreview = typeof firstCall.arguments === 'string' 
+                                ? firstCall.arguments 
                                 : JSON.stringify(firstCall.arguments);
                             argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
                         }
-                    } else if (event.data && typeof event.data.name === 'string') {
+                    } else if (event.data && typeof event.data.name === 'string') { 
                         toolNameFromEvent = event.data.name;
                         const argsForPreview = typeof event.data.arguments === 'string'
                             ? event.data.arguments
                             : JSON.stringify(event.data.arguments);
                         argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
                     }
-
+                    
                     currentToolName = toolNameFromEvent || 'tool';
 
+                    // Post the "Calling tool..." message as a new message
                     const toolMsgResponse = await client.chat.postMessage({
                         channel: threadInfo.channelId,
                         thread_ts: threadInfo.threadTs,
                         ...blockKit.functionCallMessage(currentToolName, 'start', argPreview),
                     });
                     toolMessageTs = toolMsgResponse.ts as string;
-                    lastMessageTs = toolMessageTs;
+                    // DO NOT set lastMessageTs here. The tool call message is stand-alone.
                     logger.info(`${logEmoji.slack} Posted tool call start message: ${toolMessageTs} for ${currentToolName}`);
                     break;
                 }
 
                 case 'tool_result':
-                    if (toolMessageTs) {
-                        // Python sends data: {'result': 'output_string', 'tool_call_id': '...'}
+                    if (toolMessageTs) { // If there was a "Calling tool..." message for this result
                         const resultText = String(event.data?.result ?? JSON.stringify(event.data));
                         const resultSummary = resultText.substring(0, 250) + (resultText.length > 250 ? "..." : "");
 
@@ -284,20 +301,32 @@ async function processMessageAndGenerateResponse(
                         await conversationUtils.updateMessage(app, threadInfo.channelId, toolMessageTs, messageUpdate.blocks as any[], messageUpdate.text);
                         logger.info(`${logEmoji.slack} Updated tool message ${toolMessageTs} with result for ${currentToolName}.`);
 
-                        lastMessageTs = toolMessageTs;
-                        rawResponseBuffer = '';
+                        // CRITICAL CHANGE: Detach from this message
+                        // The tool call and its result are now complete in the message at toolMessageTs.
+                        // Any subsequent llm_chunk should form a new message.
+                        lastMessageTs = undefined; 
+                        toolMessageTs = undefined; // This specific tool cycle is done
+                        // currentToolName = undefined; // Reset if you are sure no more results for *this* name are expected immediately.
+                                                     // Or keep if model might retry or use same tool. For now, clearing it is safer for distinct cycles.
+                        rawResponseBuffer = ''; // Clear any buffer, text after tool result is new.
                         charsSinceLastFlushInSegment = 0;
-                        // toolMessageTs = undefined; // Optionally clear if you want next llm_chunk to start a new message
-                        // currentToolName = undefined; // Optionally clear if you want to reset after tool result
+
                     } else {
-                        logger.warn(`${logEmoji.warning} Received tool_result but no toolMessageTs (no prior tool_calls?). Posting result as new message.`);
+                        // This case handles a tool_result event that doesn't have a preceding tool_calls message TS.
+                        // This might happen if the state was lost or if a tool result comes unexpectedly.
+                        // Post it as a new message.
+                        logger.warn(`${logEmoji.warning} Received tool_result but no toolMessageTs. Posting result as new message.`);
                         const resultSummary = String(event.data?.result ?? JSON.stringify(event.data)).substring(0,100);
+                        const toolNameForResult = currentToolName || (event.data as any)?.tool_name || 'unknown tool'; // Try to get name if available
+                        
+                        const toolResultStandaloneMessage = blockKit.functionCallMessage(toolNameForResult, 'end', resultSummary);
                         await client.chat.postMessage({
                             channel: threadInfo.channelId,
                             thread_ts: threadInfo.threadTs,
-                            text: `Function Result (orphaned):\n\`\`\`\n${resultSummary}\n\`\`\``
+                            ...toolResultStandaloneMessage
                         });
-                        rawResponseBuffer = '';
+                        lastMessageTs = undefined; // Ensure next LLM chunk is also a new message
+                        rawResponseBuffer = ''; 
                         charsSinceLastFlushInSegment = 0;
                     }
                     break;
