@@ -1,31 +1,21 @@
 import os
 import json
-import pathlib  # Add this import
-print("!!! MCP_SERVERS.PY - FILE VERSION 20240516-153000 HAS BEEN LOADED !!!", flush=True)
+import pathlib
+print("!!! MCP_SERVERS.PY - FILE VERSION 20240517-143000 HAS BEEN LOADED !!!", flush=True) # Updated version for clarity
 from agents.mcp import MCPServerSse, MCPServerStdio
 
 import contextvars
 from custom_slack_agent import slack_user_id_var
 
-import pathlib  # Add this import
-
-# --- NEW: Schema Patching Function ---
-import json
-
+# --- Schema Patching Function ---
 def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_depth=8):
+    # (Your existing recursive schema patching logic for 'items' - keep as is)
+    # This function is for ensuring arrays have valid 'items' definitions.
+    # It is separate from adding 'cache_control'.
     # print(f"!!!!!!!!!! ENTERED _ensure_items_in_schema_recursive FOR PATH: {path} (depth={depth}) !!!!!!!!!", flush=True)
-    # print(f"ENTER_RECURSE: Path='{path}', TypeOfSchemaPart='{type(schema_part)}', Depth={depth}")
     if depth > max_depth:
-        print(f"WARNING: Max schema recursion depth ({max_depth}) exceeded at path '{path}'. Stopping recursion to avoid excessive nesting.", flush=True)
+        print(f"WARNING: Max schema recursion depth ({max_depth}) exceeded at path '{path}'. Stopping recursion.", flush=True)
         return
-    if depth > 5:
-        print(f"NOTICE: _ensure_items_in_schema_recursive nesting level {depth} at path '{path}'", flush=True)
-    # if isinstance(schema_part, dict):
-    #     print(f"ENTER_RECURSE_DICT_CONTENT: {json.dumps(schema_part, indent=2)}")
-    # else:
-    #     print(f"ENTER_RECURSE_NON_DICT_CONTENT: {str(schema_part)[:200]}")
-    # --- End Log EVERY entry ---
-
     if not isinstance(schema_part, dict):
         return
 
@@ -38,60 +28,68 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_d
         except Exception:
             pass
 
-    items_is_missing_or_invalid = False
+    items_is_missing_or_invalid = (
+        "items" not in schema_part or
+        not isinstance(items_value, dict) or
+        not items_value or # empty dict
+        "type" not in items_value # dict but no type
+    )
 
-    if "items" not in schema_part:
-        items_is_missing_or_invalid = True
-    elif not isinstance(items_value, dict):
-        items_is_missing_or_invalid = True
-        print(f"DEBUG_PATCH_ACTION_WARN: Path='{path}', ParamName='{param_name_for_log}', 'items' key exists but its value is NOT A DICT. Value: {str(items_value)[:100]}. Will attempt to patch.", flush=True)
-    elif not items_value:
-        items_is_missing_or_invalid = True
-        print(f"DEBUG_PATCH_ACTION_WARN: Path='{path}', ParamName='{param_name_for_log}', 'items' is an EMPTY DICT {{}}. Will patch.", flush=True)
-    elif "type" not in items_value:
-        items_is_missing_or_invalid = True
-        print(f"DEBUG_PATCH_ACTION_WARN: Path='{path}', ParamName='{param_name_for_log}', 'items' IS A DICT BUT LACKS A 'type' KEY. Items content: {json.dumps(items_value)}. Will patch.", flush=True)
-    else:
-        items_is_missing_or_invalid = False
-
-    needs_items_patch = is_array_type and items_is_missing_or_invalid
-
-    # if is_array_type:
-    #     print(f"DETAILED_INSPECT_ARRAY: Path='{path}', EffectiveParamName='{param_name_for_log}', IsArray={is_array_type}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Current schema_part: {json.dumps(schema_part, indent=2)}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Value of 'items' key (schema_part.get(\"items\")): {json.dumps(items_value)}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Is 'items' key missing? {'items' not in schema_part}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Is 'items' value NOT a dict? {not isinstance(items_value, dict)}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Calculated 'items_is_missing_or_invalid': {items_is_missing_or_invalid}")
-    #     print(f"DETAILED_INSPECT_ARRAY: Calculated 'needs_items_patch': {needs_items_patch}")
-
-    if needs_items_patch:
-        print(f"DEBUG_PATCH_ACTION: Patching 'items' for array at path '{path}'. Setting to {{'type': 'string'}}.", flush=True)
+    if is_array_type and items_is_missing_or_invalid:
+        # print(f"DEBUG_PATCH_ACTION (_ensure_items): Patching 'items' for array at path '{path}'. Setting to {{'type': 'string'}}.", flush=True)
         schema_part["items"] = {"type": "string"}
 
-    # --- NEW: If items is a dict and type is array, recurse into its items ---
     if is_array_type and isinstance(schema_part.get("items"), dict):
         items_dict = schema_part["items"]
-        if items_dict.get("type") == "array":
-            print(f"DEBUG_PATCH_ACTION: Recursing into nested array 'items' at path '{path}.items'", flush=True)
-            _ensure_items_in_schema_recursive(items_dict, f"{path}.items", depth=depth+1, max_depth=max_depth)
-        # If items_dict is a dict but missing type, still recurse to patch further
-        elif "type" not in items_dict:
-            print(f"DEBUG_PATCH_ACTION: Recursing into 'items' dict missing type at path '{path}.items'", flush=True)
-            _ensure_items_in_schema_recursive(items_dict, f"{path}.items", depth=depth+1, max_depth=max_depth)
-
+        if items_dict.get("type") == "array" or "type" not in items_dict : # Recurse if items is array or items dict is missing type
+            # print(f"DEBUG_PATCH_ACTION (_ensure_items): Recursing into 'items' at path '{path}.items'", flush=True)
+            _ensure_items_in_schema_recursive(items_dict, f"{path}.items", depth=depth + 1, max_depth=max_depth)
+    
     for key, value in list(schema_part.items()):
         new_path = f"{path}.{key}"
         if isinstance(value, dict):
-            _ensure_items_in_schema_recursive(value, new_path, depth=depth+1, max_depth=max_depth)
+            _ensure_items_in_schema_recursive(value, new_path, depth=depth + 1, max_depth=max_depth)
         elif isinstance(value, list) and key in ("allOf", "anyOf", "oneOf", "prefixItems"):
             for i, sub_schema in enumerate(value):
                 if isinstance(sub_schema, dict):
-                    _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]", depth=depth+1, max_depth=max_depth)
+                    _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]", depth=depth + 1, max_depth=max_depth)
+
 
 def patch_tool_list_schemas_V2(tools_list):
-    # Tool patching is disabled.
-    return tools_list
+    if not isinstance(tools_list, list):
+        print(f"WARNING (patch_tool_list_schemas_V2): Expected tools_list to be a list, got {type(tools_list)}. Skipping patching.", flush=True)
+        return tools_list
+
+    patched_tools = []
+    for i, tool_def in enumerate(tools_list):
+        if not isinstance(tool_def, dict):
+            print(f"WARNING (patch_tool_list_schemas_V2): Tool definition at index {i} is not a dict. Skipping. Tool: {str(tool_def)[:100]}", flush=True)
+            patched_tools.append(tool_def) # Append as is if not a dict
+            continue
+
+        # Apply the original recursive schema patching for 'items' in arrays
+        # This ensures parameters schemas are valid first.
+        if "parameters" in tool_def.get("function", {}):
+             _ensure_items_in_schema_recursive(tool_def["function"]["parameters"], f"tool[{i}].function.parameters")
+        
+        # Add cache_control for Anthropic prompt caching for function tools
+        if tool_def.get("type") == "function" and "function" in tool_def and isinstance(tool_def["function"], dict):
+            # Make a copy to avoid modifying the original tool_def if it's shared or cached elsewhere before this point
+            # However, the MCPServer might cache the result of list_tools *after* this function, so modifying in place is usually fine.
+            # For safety in complex caching scenarios, copying is better:
+            # current_tool = json.loads(json.dumps(tool_def)) # Deep copy
+            current_tool = tool_def # Modify in place for now, assuming SDK handles caching correctly
+
+            function_definition = current_tool["function"]
+            if "cache_control" not in function_definition:
+                function_definition["cache_control"] = {"type": "ephemeral"}
+                tool_name_for_log = function_definition.get('name', f'index_{i}')
+                print(f"DEBUG_CACHE_PATCH: Added 'cache_control' to tool '{tool_name_for_log}'.", flush=True)
+            patched_tools.append(current_tool)
+        else:
+            patched_tools.append(tool_def) # Append as is if not a function tool
+            
+    return patched_tools
 # --- END: Schema Patching Function ---
 
 # --- User Config: How your Python agent maps Slack IDs to URL Tokens ---
