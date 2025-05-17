@@ -88,7 +88,7 @@ print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent 
 
 custom_model_settings = ModelSettings(
     max_tokens=desired_max_tokens,
-    reasoning_effort="high"
+    thinking={"type": "enabled", "budget_tokens": 8000}
     # You can also set other parameters here, for example:
     # temperature=0.7
 )
