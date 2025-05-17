@@ -86,11 +86,19 @@ if not agent_model_name_from_env.startswith("litellm/"):
 desired_max_tokens = 64000
 print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent (Claude 3 Sonnet safe limit).")
 
+# Construct the thinking parameter for Anthropic
+anthropic_thinking_params = {
+    "thinking": {
+        "type": "enabled",
+        "budget_tokens": 1024  # Or your desired budget
+    }
+}
+
 custom_model_settings = ModelSettings(
     max_tokens=desired_max_tokens,
-    thinking={"type": "enabled", "budget_tokens": 1024}
-    # You can also set other parameters here, for example:
-    # temperature=0.7
+    temperature=0.7,  # Example of another standard parameter
+    # Pass provider-specific parameters via extra_body
+    extra_body=anthropic_thinking_params
 )
 
 print("--- Initializing Agent with MCP Servers ---")
