@@ -1,5 +1,6 @@
 import os
 import json
+import pathlib  # Add this import
 print("!!! MCP_SERVERS.PY - FILE VERSION 20240516-153000 HAS BEEN LOADED !!!", flush=True)
 from agents.mcp import MCPServerSse, MCPServerStdio
 
@@ -362,6 +363,10 @@ hubspot_mcp_server = PatchedMCPServerStdio(
 )
 
 # --- Slack MCP Server definition ---
+# --- Common default config directory for MCP servers ---
+default_mcp_config_path = pathlib.Path(os.getcwd()) / ".mcp_configs" / "default"
+default_mcp_config_path.mkdir(parents=True, exist_ok=True)
+
 slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
 slack_team_id = os.getenv("SLACK_TEAM_ID")
 if not slack_bot_token or not slack_team_id:
@@ -378,7 +383,7 @@ slack_mcp_server = MCPServerStdio(
         "env": {
             "SLACK_BOT_TOKEN": slack_bot_token or "",
             "SLACK_TEAM_ID": slack_team_id or "",
-            "XDG_CONFIG_HOME": os.environ.get("XDG_CONFIG_HOME") or "/tmp",
+            "XDG_CONFIG_HOME": str(default_mcp_config_path),
         }
     },
     client_session_timeout_seconds=60.0,
