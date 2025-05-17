@@ -90,135 +90,7 @@ def _ensure_items_in_schema_recursive(schema_part, path="schema", depth=0, max_d
                     _ensure_items_in_schema_recursive(sub_schema, f"{new_path}[{i}]", depth=depth+1, max_depth=max_depth)
 
 def patch_tool_list_schemas_V2(tools_list):
-    print(f"!!!!!!!!!! ENTERED patch_tool_list_schemas_V2 with {len(tools_list) if isinstance(tools_list, list) else 'NON-LIST OBJECT'} tools !!!!!!!!!", flush=True)
-    if not isinstance(tools_list, list):
-        print(f"DEBUG_PATCH: tools_list is not a list (type: {type(tools_list)}), skipping patch.", flush=True)
-        return tools_list
-
-    print(f"DEBUG_PATCH: Attempting to patch schemas for {len(tools_list)} tools (V2 - FORCED PARAM SCHEMA LOGGING).", flush=True)
-    for i, tool_def in enumerate(tools_list):
-        parameters_schema = None
-        tool_name_for_debug = f"tool_at_index_{i}" # Default tool name for logging
-
-        if isinstance(tool_def, dict):
-            # If tool_def is a dictionary, try to get 'name' and 'parameters'
-            tool_name_for_debug = tool_def.get("name", f"tool_dict_at_index_{i}")
-            parameters_schema = tool_def.get("parameters")
-            # Fallback for dicts that might use inputSchema, though less common for pure dicts
-            if parameters_schema is None and "inputSchema" in tool_def:
-                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is a dict, using 'inputSchema' as parameters_schema.", flush=True)
-                parameters_schema = tool_def.get("inputSchema")
-        elif hasattr(tool_def, "name"): # For Tool objects or similar
-            tool_name_for_debug = getattr(tool_def, "name", f"tool_obj_at_index_{i}")
-            if hasattr(tool_def, "inputSchema"):
-                parameters_schema = getattr(tool_def, "inputSchema", None)
-                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is an object, using 'inputSchema' attribute for parameters. Type: {type(parameters_schema)}", flush=True)
-            elif hasattr(tool_def, "parameters"): # Fallback if it's an object with 'parameters'
-                parameters_schema = getattr(tool_def, "parameters", None)
-                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' is an object, using 'parameters' attribute for parameters. Type: {type(parameters_schema)}", flush=True)
-            else:
-                print(f"DEBUG_PATCH_WARN: Tool '{tool_name_for_debug}' is an object but has neither 'inputSchema' nor 'parameters' attribute.", flush=True)
-        else:
-            # Fallback if tool_def is neither a dict nor a recognizable Tool object
-            print(f"DEBUG_PATCH_WARN: Tool at index {i} is of unrecognized type '{type(tool_def)}'. Attempting to get 'name' and 'parameters' by common fallbacks.", flush=True)
-            if hasattr(tool_def, "get"): # Check if it behaves like a dict
-                tool_name_for_debug = tool_def.get("name", tool_name_for_debug)
-                parameters_schema = tool_def.get("parameters") or tool_def.get("inputSchema")
-            # else: parameters_schema remains None
-
-        if not isinstance(parameters_schema, dict):
-            print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' has no valid parameters schema (or not a dict). Type: {type(parameters_schema)}. Skipping its params.", flush=True)
-            print(f"RAW_TOOL_OBJECT: {repr(tool_def)}", flush=True)
-            continue
-
-        # --- Log the entire parameters_schema for this tool BEFORE any modifications in this function ---
-        # print(f"\n======================================================================", flush=True)
-        # print(f"PROCESSING PARAMETERS FOR TOOL: '{tool_name_for_debug}' (Index: {i})", flush=True)
-        # print(f"======================================================================", flush=True)
-        # print(f"RAW_PARAMS_SCHEMA_LOG (PRE-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
-        # if parameters_schema is None:
-        #     print("  Parameters schema is None.", flush=True)
-        # elif not parameters_schema:
-        #     print("  Parameters schema is an empty dictionary {}.", flush=True)
-        # else:
-        #     try:
-        #         print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
-        #     except Exception as e:
-        #         print(f"  ERROR JSON-DUMPING PRE-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
-        #         print(f"  RAW SCHEMA (PRE-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
-        # ---
-
-        # Basic schema type enforcement
-        if "properties" in parameters_schema:
-            if parameters_schema.get("type") != "object":
-                print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema: Forcing type to 'object' as 'properties' key exists. Original type: '{parameters_schema.get('type')}'", flush=True)
-                parameters_schema["type"] = "object"
-        elif not parameters_schema: 
-             print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema: Is empty, setting to type object with empty properties.", flush=True)
-             parameters_schema.update({"type": "object", "properties": {}})
-        else:
-            # If no 'properties' and not empty, log its type to see what it is
-            print(f"DEBUG_PATCH_INFO: Tool '{tool_name_for_debug}' main params schema has no 'properties' and is not empty. Type: '{parameters_schema.get('type')}'. Schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
-
-        # --- Patch empty or missing-type parameter schemas ---
-        current_schema_type_for_iteration = parameters_schema.get('type')
-        if current_schema_type_for_iteration == "object" and "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
-            for param_name, param_schema_dict_val in list(parameters_schema["properties"].items()):
-                if isinstance(param_schema_dict_val, dict) and not param_schema_dict_val:
-                    # print(f"DEBUG_PATCH_FIX_EMPTY_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' was {{}}. Defaulting to {{'type': 'string', 'description': 'Patched: Was an empty schema'}}.", flush=True)
-                    parameters_schema["properties"][param_name] = {"type": "string", "description": "Patched: Was an empty schema"}
-                elif isinstance(param_schema_dict_val, dict) and "type" not in param_schema_dict_val and param_schema_dict_val:
-                    if not any(k in param_schema_dict_val for k in ["allOf", "anyOf", "oneOf", "not", "$ref"]):
-                        # print(f"DEBUG_PATCH_FIX_MISSING_TYPE_PARAM: Tool '{tool_name_for_debug}', Param '{param_name}' is a dict but missing 'type'. Defaulting to 'string'. Original: {json.dumps(param_schema_dict_val)}", flush=True)
-                        original_desc = param_schema_dict_val.get("description", "Patched: Was a dict missing type")
-                        parameters_schema["properties"][param_name] = {"type": "string", "description": original_desc, **param_schema_dict_val}
-                        parameters_schema["properties"][param_name].pop("type", None)
-                        parameters_schema["properties"][param_name]["type"] = "string"
-
-        current_schema_type_for_iteration = parameters_schema.get('type')
-        if current_schema_type_for_iteration == "object":
-            if "properties" in parameters_schema and isinstance(parameters_schema["properties"], dict):
-                # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}': Iterating properties for items check.", flush=True)
-                for param_name, param_schema_dict in parameters_schema["properties"].items():
-                    path_for_recursive_call = f"tool:'{tool_name_for_debug}'.param:'{param_name}'"
-                    
-                    # --- Explicitly log the param_schema_dict being passed to the recursive function ---
-                    # print(f"  INSPECT_CALL_TO_RECURSIVE: Tool='{tool_name_for_debug}', Param='{param_name}'", flush=True)
-                    # print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict type: {type(param_schema_dict)}", flush=True)
-                    # if isinstance(param_schema_dict, dict):
-                    #      print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {json.dumps(param_schema_dict, indent=4)}", flush=True)
-                    # else:
-                    #      print(f"  INSPECT_CALL_TO_RECURSIVE:   param_schema_dict content: {str(param_schema_dict)}", flush=True)
-                    # ---
-                    
-                    _ensure_items_in_schema_recursive(param_schema_dict, path_for_recursive_call)
-            else:
-                # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' (type object) has no 'properties' dict OR 'properties' is not a dict. Properties: {parameters_schema.get('properties')}", flush=True)
-                pass
-        elif current_schema_type_for_iteration == "array":
-            # print(f"DEBUG_PATCH: Tool '{tool_name_for_debug}' params is type 'array'. Path: tool:'{tool_name_for_debug}'.params_direct_array", flush=True)
-            _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_direct_array")
-        else:
-            # print(f"DEBUG_PATCH: Parameters schema for '{tool_name_for_debug}' (type: {current_schema_type_for_iteration}) not an 'object' with properties or 'array'. Full schema: {json.dumps(parameters_schema, indent=2)}", flush=True)
-            if isinstance(parameters_schema, dict):
-                _ensure_items_in_schema_recursive(parameters_schema, f"tool:'{tool_name_for_debug}'.params_unknown_structure")
-
-
-        # --- Log the entire parameters_schema for this tool AFTER all modifications in this function ---
-        # print(f"\nRAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): Tool='{tool_name_for_debug}'", flush=True)
-        # if parameters_schema is None:
-        #     print("  Parameters schema is None.", flush=True)
-        # elif not parameters_schema:
-        #     print("  Parameters schema is an empty dictionary {}.", flush=True)
-        # else:
-        #     try:
-        #         print(json.dumps(parameters_schema, indent=2, default=str), flush=True)
-        #     except Exception as e:
-        #         print(f"  ERROR JSON-DUMPING POST-PATCH SCHEMA for tool '{tool_name_for_debug}': {e}", flush=True)
-        #         print(f"  RAW SCHEMA (POST-PATCH) AS STRING: {str(parameters_schema)[:1000]}", flush=True)
-        # print(f"RAW_PARAMS_SCHEMA_LOG (POST-PATCHING_V2): ---------------------------------------\n", flush=True)
-        # ---
-            
+    # Tool patching is disabled.
     return tools_list
 # --- END: Schema Patching Function ---
 
@@ -250,7 +122,7 @@ railway_mcp_server = MCPServerSse(
 class PatchedMCPServerSse(MCPServerSse):
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
-        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerSse).")
+        # Tool patching disabled
         return patch_tool_list_schemas_V2(tools)
 
 primary_railway_mcp_server = PatchedMCPServerSse(
@@ -275,7 +147,7 @@ class FilteredMCPServerSse(MCPServerSse):
     async def list_tools(self, *args, **kwargs):
         slack_user_id = slack_user_id_var.get()
         tools = await super().list_tools(*args, **kwargs)
-        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' server.")
+        # Tool patching disabled
         tools = patch_tool_list_schemas_V2(tools)
         print(f"DEBUG: Tools available BEFORE filter ({self.name}):")
         for tool in tools:
@@ -344,7 +216,7 @@ from agents.mcp import MCPServerStdio
 class PatchedMCPServerStdio(MCPServerStdio):
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
-        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedMCPServerStdio).")
+        # Tool patching disabled
         return patch_tool_list_schemas_V2(tools)
 
 # Ensure a unique config directory for HubSpot MCP
@@ -481,7 +353,7 @@ class PatchedMCPServerSse(MCPServerSse):
 class PatchedNotionMCPByURL(NotionMCPByURL):
     async def list_tools(self, *args, **kwargs):
         tools = await super().list_tools(*args, **kwargs)
-        print(f"DEBUG_PATCH: Applying V2 schema patching to tools from '{self.name}' (PatchedNotionMCPByURL).")
+        # Tool patching disabled
         return patch_tool_list_schemas_V2(tools)
 
 # --- Instantiate your new server class in mcp_servers.py ---
