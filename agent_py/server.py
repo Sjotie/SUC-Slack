@@ -163,6 +163,21 @@ def format_message_content_for_agents_sdk(content_input: Union[str, List[Dict[st
 
     return sdk_formatted_parts
 
+from openai.types.beta.threads.runs import ToolOutput
+try:
+    from openai_agents.events import RunItemStreamEvent
+except ImportError:
+    RunItemStreamEvent = None  # Fallback if not available
+
+from openai.types.responses import (
+    ResponseTextDeltaEvent,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
+    ResponseFunctionToolCall
+)
+import json
+import asyncio
+
 async def stream_agent_events(agent, messages, *, max_retries: int = 2):
     print(f"PY_AGENT_DEBUG (stream_agent_events): Starting agent stream. Number of messages: {len(messages)}")
     if messages:
@@ -178,42 +193,63 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
             )
             print("PY_AGENT_DEBUG (stream_agent_events): Runner.run_streamed called, agent stream should start.")
             async for event in run_result.stream_events():
-                raw_event_type = 'unknown_raw'
+                event_type_str = getattr(event, 'type', getattr(event, 'event', 'unknown_event_type_attr'))
+                event_data_obj = getattr(event, 'data', None)
+
                 if hasattr(event, 'type'):
-                    raw_event_type = event.type
+                    event_type_val = event.type
                 elif hasattr(event, 'event') and isinstance(event.event, str):
-                    raw_event_type = event.event
-                print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
+                    event_type_val = event.event
+                else:
+                    event_type_val = None
 
-                # --- RAW LOGS: TEMPORARY - LOG ALL RAW EVENTS ---
-                # This is a temporary debug log to capture all raw events (including tool calls).
-                # Remove or adjust once streaming is fixed.
-                event_type_name = getattr(event, 'type', None) or getattr(event, 'event', None) or 'unknown'
-                event_data_str = str(getattr(event, 'data', None))
-                if len(event_data_str) > 300:
-                    event_data_str = event_data_str[:300] + " ...[truncated]"
-                print(f"RAW LOG (TEMP): Raw event detected: type='{event_type_name}' | Data: {event_data_str}")
+                # --- 1. Handle LLM Text Chunks ---
+                if event_type_val == "raw_response_event" and isinstance(event_data_obj, ResponseTextDeltaEvent):
+                    if event_data_obj.delta:
+                        yield f"{json.dumps({'type': 'llm_chunk', 'data': event_data_obj.delta})}\n"
+                        await asyncio.sleep(0.01)
+                    continue
 
-                # (Tool call/result handling omitted for brevity, see previous code)
+                # --- 2. Handle Model's Decision to Call a Tool ---
+                if event_type_val == "raw_response_event" and \
+                   isinstance(event_data_obj, ResponseOutputItemAddedEvent) and \
+                   hasattr(event_data_obj, 'item') and isinstance(event_data_obj.item, ResponseFunctionToolCall):
 
-                if (
-                    hasattr(event, 'type') and event.type == "raw_response_event"
-                    and isinstance(event.data, ResponseTextDeltaEvent)
-                ):
-                    print(f"PY_AGENT_DEBUG (stream_agent_events): Yielding llm_chunk: {event.data.delta}")
-                    yield f"{json.dumps({'type': 'llm_chunk', 'data': event.data.delta})}\n"
+                    tool_call_instance = event_data_obj.item
+                    args_str = tool_call_instance.arguments if isinstance(tool_call_instance.arguments, str) else json.dumps(tool_call_instance.arguments)
+                    tool_call_payload = {
+                        'name': tool_call_instance.name,
+                        'id': getattr(tool_call_instance, 'id', None) or getattr(tool_call_instance, 'call_id', None),
+                        'arguments': args_str
+                    }
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Yielding tool_calls for {tool_call_payload['name']}")
+                    yield f"{json.dumps({'type': 'tool_calls', 'data': [tool_call_payload]})}\n"
                     await asyncio.sleep(0.01)
                     continue
 
-                if hasattr(event, 'type') and event.type in (
-                    "raw_response_event",
-                    "agent_updated_stream_event",
-                    "run_item_stream_event",
-                ):
-                    print(f"PY_AGENT_DEBUG (stream_agent_events): Ignoring SDK chatter event: {event.type}, Data type: {type(getattr(event, 'data', None))}")
+                # --- 3. Handle Tool Execution Result ---
+                if event_type_val == "run_item_stream_event" and isinstance(event_data_obj, ToolOutput):
+                    tool_output_data = event_data_obj
+                    tool_result_payload = {
+                        'tool_call_id': tool_output_data.tool_call_id,
+                        'result': tool_output_data.output,
+                    }
+                    print(f"PY_AGENT_DEBUG (stream_agent_events): Yielding tool_result for call_id {tool_output_data.tool_call_id}")
+                    yield f"{json.dumps({'type': 'tool_result', 'data': tool_result_payload})}\n"
+                    await asyncio.sleep(0.01)
                     continue
 
-                # Fallback processing for other event types (omitted for brevity)
+                # --- 4. Ignoring other known SDK chatter events ---
+                ignored_sdk_event_types = [
+                    "agent_updated_stream_event",
+                ]
+                if event_type_val in ignored_sdk_event_types or \
+                   (event_type_val == "raw_response_event" and not isinstance(event_data_obj, (ResponseTextDeltaEvent, ResponseOutputItemAddedEvent))) or \
+                   (event_type_val == "run_item_stream_event" and not isinstance(event_data_obj, ToolOutput)):
+                    continue
+
+                # Fallback for any other unhandled events (for debugging)
+                # print(f"PY_AGENT_WARNING (stream_agent_events): Unhandled event by explicit logic: type='{event_type_val}', data='{str(event_data_obj)[:200]}'")
 
             break
 

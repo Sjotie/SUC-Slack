@@ -228,7 +228,7 @@ async function processMessageAndGenerateResponse(
                     }
                     break;
 
-                case 'tool_call':
+                case 'tool_call': // For backward compatibility
                 case 'tool_calls': {
                     const textBeforeTool = rawResponseBuffer.trim();
                     if (textBeforeTool && lastMessageTs) {
@@ -243,14 +243,24 @@ async function processMessageAndGenerateResponse(
 
                     let toolNameFromEvent: string | undefined;
                     let argPreview: string = '';
+
                     if (event.type === 'tool_calls' && Array.isArray(event.data) && event.data.length > 0) {
-                        const firstCall = event.data[0]?.function || event.data[0];
-                        toolNameFromEvent = firstCall?.name;
-                        argPreview = firstCall?.arguments ? JSON.stringify(firstCall.arguments).slice(0, 80) : '';
-                    } else if (event.data) {
-                        toolNameFromEvent = event.data.tool_name || event.data.name;
-                        argPreview = event.data.arguments ? JSON.stringify(event.data.arguments).slice(0, 80) : '';
+                        const firstCall = event.data[0];
+                        if (firstCall && typeof firstCall.name === 'string') {
+                            toolNameFromEvent = firstCall.name;
+                            const argsForPreview = typeof firstCall.arguments === 'string'
+                                ? firstCall.arguments
+                                : JSON.stringify(firstCall.arguments);
+                            argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
+                        }
+                    } else if (event.data && typeof event.data.name === 'string') {
+                        toolNameFromEvent = event.data.name;
+                        const argsForPreview = typeof event.data.arguments === 'string'
+                            ? event.data.arguments
+                            : JSON.stringify(event.data.arguments);
+                        argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
                     }
+
                     currentToolName = toolNameFromEvent || 'tool';
 
                     const toolMsgResponse = await client.chat.postMessage({
@@ -266,26 +276,26 @@ async function processMessageAndGenerateResponse(
 
                 case 'tool_result':
                     if (toolMessageTs) {
-                        const toolResultData = event.data?.result ?? event.data;
-                        const resultSummaryText = typeof toolResultData === 'string' ? toolResultData : JSON.stringify(toolResultData);
-                        const resultSummary = resultSummaryText.substring(0, 250) + (resultSummaryText.length > 250 ? "..." : "");
+                        // Python sends data: {'result': 'output_string', 'tool_call_id': '...'}
+                        const resultText = String(event.data?.result ?? JSON.stringify(event.data));
+                        const resultSummary = resultText.substring(0, 250) + (resultText.length > 250 ? "..." : "");
 
                         const messageUpdate = blockKit.functionCallMessage(currentToolName || 'tool', 'end', resultSummary);
                         await conversationUtils.updateMessage(app, threadInfo.channelId, toolMessageTs, messageUpdate.blocks as any[], messageUpdate.text);
-                        logger.info(`${logEmoji.slack} Updated tool message ${toolMessageTs} with result.`);
+                        logger.info(`${logEmoji.slack} Updated tool message ${toolMessageTs} with result for ${currentToolName}.`);
 
-                        lastMessageTs = undefined;
+                        lastMessageTs = toolMessageTs;
                         rawResponseBuffer = '';
                         charsSinceLastFlushInSegment = 0;
-                        toolMessageTs = undefined;
-                        currentToolName = undefined;
+                        // toolMessageTs = undefined; // Optionally clear if you want next llm_chunk to start a new message
+                        // currentToolName = undefined; // Optionally clear if you want to reset after tool result
                     } else {
-                        logger.warn(`${logEmoji.warning} Received tool_result but no toolMessageTs. Posting result as new message.`);
-                        const resultSummary = typeof event.data?.result === 'string' ? event.data.result.substring(0,100) : "[Tool Result]";
+                        logger.warn(`${logEmoji.warning} Received tool_result but no toolMessageTs (no prior tool_calls?). Posting result as new message.`);
+                        const resultSummary = String(event.data?.result ?? JSON.stringify(event.data)).substring(0,100);
                         await client.chat.postMessage({
                             channel: threadInfo.channelId,
                             thread_ts: threadInfo.threadTs,
-                            text: `Function Result for ${currentToolName || 'unknown tool'}:\n\`\`\`\n${resultSummary}\n\`\`\``
+                            text: `Function Result (orphaned):\n\`\`\`\n${resultSummary}\n\`\`\``
                         });
                         rawResponseBuffer = '';
                         charsSinceLastFlushInSegment = 0;
