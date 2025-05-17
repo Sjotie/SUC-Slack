@@ -87,7 +87,8 @@ desired_max_tokens = 64000
 print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent (Claude 3 Sonnet safe limit).")
 
 custom_model_settings = ModelSettings(
-    max_tokens=desired_max_tokens
+    max_tokens=desired_max_tokens,
+    thinking={"type": "enabled", "budget_tokens": 1024}
     # You can also set other parameters here, for example:
     # temperature=0.7
 )
