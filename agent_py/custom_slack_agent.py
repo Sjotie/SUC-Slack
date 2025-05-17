@@ -90,13 +90,13 @@ print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent 
 anthropic_thinking_params = {
     "thinking": {
         "type": "enabled",
-        "budget_tokens": 1024  # Or your desired budget
+        "budget_tokens": 8000
     }
 }
 
 custom_model_settings = ModelSettings(
     max_tokens=desired_max_tokens,
-    temperature=0.7,  # Example of another standard parameter
+    temperature=1,
     # Pass provider-specific parameters via extra_body
     extra_body=anthropic_thinking_params
 )
