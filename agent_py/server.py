@@ -227,7 +227,8 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                     continue
 
                 # --- 3. Handle Tool Execution Result ---
-                if event_type_val == "run_item_stream_event" and isinstance(event_data_obj, ToolOutput):
+                # Only check isinstance if ToolOutput is a type (not None)
+                if event_type_val == "run_item_stream_event" and ToolOutput is not None and isinstance(event_data_obj, ToolOutput):
                     tool_output_data = event_data_obj
                     tool_result_payload = {
                         'tool_call_id': tool_output_data.tool_call_id,
@@ -244,7 +245,7 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                 ]
                 if event_type_val in ignored_sdk_event_types or \
                    (event_type_val == "raw_response_event" and not isinstance(event_data_obj, (ResponseTextDeltaEvent, ResponseOutputItemAddedEvent))) or \
-                   (event_type_val == "run_item_stream_event" and not isinstance(event_data_obj, ToolOutput)):
+                   (event_type_val == "run_item_stream_event" and ToolOutput is not None and not isinstance(event_data_obj, ToolOutput)):
                     continue
 
                 # Fallback for any other unhandled events (for debugging)
