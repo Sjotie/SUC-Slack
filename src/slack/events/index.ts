@@ -265,17 +265,24 @@ async function processMessageAndGenerateResponse(
                         const firstCall = event.data[0]; 
                         if (firstCall && typeof firstCall.name === 'string') {
                             toolNameFromEvent = firstCall.name;
-                            const argsForPreview = typeof firstCall.arguments === 'string' 
+                            let argsForPreview = typeof firstCall.arguments === 'string' 
                                 ? firstCall.arguments 
                                 : JSON.stringify(firstCall.arguments);
-                            argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
+                            // Truncate to max 200 characters for function call content
+                            if (argsForPreview && argsForPreview.length > 200) {
+                                argsForPreview = argsForPreview.slice(0, 200) + '...';
+                            }
+                            argPreview = argsForPreview || '';
                         }
                     } else if (event.data && typeof event.data.name === 'string') { 
                         toolNameFromEvent = event.data.name;
-                        const argsForPreview = typeof event.data.arguments === 'string'
+                        let argsForPreview = typeof event.data.arguments === 'string'
                             ? event.data.arguments
                             : JSON.stringify(event.data.arguments);
-                        argPreview = argsForPreview ? argsForPreview.slice(0, 80) + (argsForPreview.length > 80 ? '...' : '') : '';
+                        if (argsForPreview && argsForPreview.length > 200) {
+                            argsForPreview = argsForPreview.slice(0, 200) + '...';
+                        }
+                        argPreview = argsForPreview || '';
                     }
                     
                     currentToolName = toolNameFromEvent || 'tool';
