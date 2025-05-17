@@ -59,8 +59,11 @@ async def startup_event():
                     if hasattr(server_instance, 'invalidate_tools_cache'):
                         server_instance.invalidate_tools_cache()
                         print(f"PY_AGENT_DEBUG (startup): Invalidated tools cache for MCP server '{server_instance.name}'.")
-                await server_instance.connect()
-                print(f"PY_AGENT_INFO (startup): Successfully connected to MCP server '{server_instance.name}'.")
+                try:
+                    await server_instance.connect()
+                    print(f"PY_AGENT_INFO (startup): Successfully connected to MCP server '{server_instance.name}'.")
+                except Exception as e_connect:
+                    print(f"PY_AGENT_ERROR (startup): Failed to connect to MCP server '{server_instance.name}' on startup: {e_connect}")
             except Exception as e:
                 print(f"PY_AGENT_ERROR (startup): Failed to connect to MCP server '{server_instance.name}' on startup: {e}")
                 print(f"PY_AGENT_ERROR (startup): Traceback: {traceback.format_exc()}")
