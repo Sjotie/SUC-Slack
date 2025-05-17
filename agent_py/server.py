@@ -468,68 +468,93 @@ async def generate_stream(req: ChatRequest, request: Request):
             continue
 
         role = hist_msg["role"]
-        content = hist_msg["content"]
+        content_input = hist_msg["content"]
+        final_content_for_hist_msg = None
 
-        if isinstance(content, list):
+        if isinstance(content_input, list):
             transformed_content_parts = []
-            for item in content:
-                if isinstance(item, dict):
-                    item_dict = item
-                elif hasattr(item, 'dict'):
-                    item_dict = item.dict()
+            for item_data in content_input:
+                item_dict = {}
+                if isinstance(item_data, dict):
+                    item_dict = item_data
+                elif hasattr(item_data, 'dict'):
+                    item_dict = item_data.dict()
                 else:
-                    print(f"PY_AGENT_DEBUG (/generate): Skipping unknown item type in history content: {type(item)}")
+                    print(f"PY_AGENT_WARNING (/generate): Skipping unknown item type in history content list: {type(item_data)}")
                     continue
 
-                if item_dict.get("type") == "input_text" or item_dict.get("type") == "text":
+                item_type = item_dict.get("type")
+                if item_type == "input_text" or item_type == "text":
                     transformed_content_parts.append({"type": "text", "text": item_dict.get("text", "")})
-                elif item_dict.get("type") == "input_image" or item_dict.get("type") == "image_url":
+                elif item_type == "input_image" or item_type == "image_url":
                     img_url_value = item_dict.get("image_url")
                     if isinstance(img_url_value, str):
                         transformed_content_parts.append(
-                            {"type": "image_url", "image_url": {"url": img_url_value}}
+                           {"type": "image_url", "image_url": {"url": img_url_value}}
                         )
                     elif isinstance(img_url_value, dict) and "url" in img_url_value:
                         transformed_content_parts.append(
-                            {"type": "image_url", "image_url": img_url_value}
+                           {"type": "image_url", "image_url": img_url_value}
                         )
-            processed_history.append({"role": role, "content": transformed_content_parts})
+            # Unwrap if only a single text part
+            if len(transformed_content_parts) == 1 and transformed_content_parts[0].get("type") == "text":
+                final_content_for_hist_msg = transformed_content_parts[0]["text"]
+            elif not transformed_content_parts:
+                final_content_for_hist_msg = ""
+            else:
+                final_content_for_hist_msg = transformed_content_parts
         else:
-            processed_history.append({"role": role, "content": content})
+            final_content_for_hist_msg = content_input
+
+        if final_content_for_hist_msg is not None:
+            processed_history.append({"role": role, "content": final_content_for_hist_msg})
 
     # Current prompt from user (req.prompt)
-    current_user_content = []
+    current_user_content_parts = []
     if isinstance(req.prompt, str):
-        current_user_content.append({"type": "text", "text": req.prompt})
+        current_user_content_parts.append({"type": "text", "text": req.prompt})
     elif isinstance(req.prompt, list):
-        for item in req.prompt:
-            if isinstance(item, dict):
-                item_dict = item
-            elif hasattr(item, 'dict'):
-                item_dict = item.dict()
+        for item_data in req.prompt:
+            item_dict = {}
+            if isinstance(item_data, dict):
+                item_dict = item_data
+            elif hasattr(item_data, 'dict'):
+                item_dict = item_data.dict()
             else:
-                print(f"PY_AGENT_DEBUG (/generate): Skipping unknown item type in prompt content: {type(item)}")
+                print(f"PY_AGENT_WARNING (/generate): Skipping unknown item type in prompt content list: {type(item_data)}")
                 continue
 
-            if item_dict.get("type") == "input_text" or item_dict.get("type") == "text":
-                current_user_content.append({"type": "text", "text": item_dict.get("text", "")})
-            elif item_dict.get("type") == "input_image" or item_dict.get("type") == "image_url":
+            item_type = item_dict.get("type")
+            if item_type == "input_text" or item_type == "text":
+                current_user_content_parts.append({"type": "text", "text": item_dict.get("text", "")})
+            elif item_type == "input_image" or item_type == "image_url":
                 img_url_value = item_dict.get("image_url")
                 if isinstance(img_url_value, str):
-                    current_user_content.append(
-                        {"type": "image_url", "image_url": {"url": img_url_value}}
-                    )
+                    current_user_content_parts.append(
+                       {"type": "image_url", "image_url": {"url": img_url_value}}
+                   )
                 elif isinstance(img_url_value, dict) and "url" in img_url_value:
-                    current_user_content.append(
-                        {"type": "image_url", "image_url": img_url_value}
-                    )
+                    current_user_content_parts.append(
+                       {"type": "image_url", "image_url": img_url_value}
+                   )
+
+    # Unwrap if only a single text part
+    if len(current_user_content_parts) == 1 and current_user_content_parts[0].get("type") == "text":
+        final_current_user_content_for_agent = current_user_content_parts[0]["text"]
+    elif not current_user_content_parts:
+        final_current_user_content_for_agent = ""
+    else:
+        final_current_user_content_for_agent = current_user_content_parts
 
     cleaned_messages = processed_history
-    if current_user_content:
-        cleaned_messages.append({"role": "user", "content": current_user_content})
+    if final_current_user_content_for_agent is not None and (
+        (isinstance(final_current_user_content_for_agent, str) and final_current_user_content_for_agent.strip() != "") or
+        (isinstance(final_current_user_content_for_agent, list) and len(final_current_user_content_for_agent) > 0)
+    ):
+        cleaned_messages.append({"role": "user", "content": final_current_user_content_for_agent})
     else:
         if not cleaned_messages or cleaned_messages[-1]["role"] != "user":
-            print("PY_AGENT_DEBUG (/generate): No current user content to send after processing prompt.")
+            print("PY_AGENT_DEBUG (/generate): No current user content to append after processing prompt.")
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
