@@ -185,11 +185,14 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                     raw_event_type = event.event
                 print(f"PY_AGENT_DEBUG (stream_agent_events): Raw event from SDK: type='{raw_event_type}'")
 
-                # --- RAW LOGS: TEMPORARY - LOG ALL FUNCTION CALL EVENTS ---
-                # This is a temporary debug log to capture when the model does tool calls.
+                # --- RAW LOGS: TEMPORARY - LOG ALL RAW EVENTS ---
+                # This is a temporary debug log to capture all raw events (including tool calls).
                 # Remove or adjust once streaming is fixed.
-                if hasattr(event, 'type') and event.type in ("tool_call", "function_call", "tool_result", "function_result"):
-                    print(f"RAW LOG (TEMP): Function/tool event detected: {event.type} | Data: {getattr(event, 'data', None)}")
+                event_type_name = getattr(event, 'type', None) or getattr(event, 'event', None) or 'unknown'
+                event_data_str = str(getattr(event, 'data', None))
+                if len(event_data_str) > 300:
+                    event_data_str = event_data_str[:300] + " ...[truncated]"
+                print(f"RAW LOG (TEMP): Raw event detected: type='{event_type_name}' | Data: {event_data_str}")
 
                 # (Tool call/result handling omitted for brevity, see previous code)
 
