@@ -399,7 +399,12 @@ async def stream_agent_events(agent, messages, *, max_retries: int = 2):
                         except Exception as flag_err:
                             print(f"PY_AGENT_ERROR (stream_agent_events): Could not reset MCP flag: {flag_err}")
 
-            yield f"{json.dumps({'type': 'error', 'data': f'Agent execution failed: {str(e)}'})}\n"
+                yield f"{json.dumps({'type': 'error', 'data': f'A connection to a required service was lost: {str(e)}. Please try again.'})}\n"
+                await asyncio.sleep(0.01)
+                break
+
+            # General catch-all for other errors during the agent run
+            yield f"{json.dumps({'type': 'error', 'data': f'An unexpected issue occurred: {str(e)}. Please try rephrasing or try again later.'})}\n"
             await asyncio.sleep(0.01)
         finally:
             print("PY_AGENT_DEBUG (stream_agent_events): Agent stream generator finished.")
@@ -475,8 +480,13 @@ async def generate_stream(req: ChatRequest, request: Request):
                     if hasattr(server_instance, 'invalidate_tools_cache'):
                         server_instance.invalidate_tools_cache()
                         print(f"PY_AGENT_DEBUG (/generate): Invalidated tools cache for MCP server '{server_instance.name}'.")
-                await server_instance.connect()  # Attempt to connect or re-establish
-                print(f"PY_AGENT_DEBUG (/generate): MCP server '{server_instance.name}' connect() call completed for request.")
+                try:
+                    await server_instance.connect()  # Attempt to connect or re-establish
+                    print(f"PY_AGENT_DEBUG (/generate): MCP server '{server_instance.name}' connect() call completed for request.")
+                except Exception as mcp_req_conn_err_single:
+                    print(f"PY_AGENT_ERROR (/generate): Failed during per-request MCP server connect for '{server_instance.name}': {mcp_req_conn_err_single}. It may be unavailable for this request.")
+                    # The agent will still have this MCP in its list, but tool calls to it will likely fail.
+                    # This change primarily makes the /generate endpoint itself more robust.
             except Exception as mcp_req_conn_err:
                 print(f"PY_AGENT_ERROR (/generate): Failed during per-request MCP server connect for '{server_instance.name}': {mcp_req_conn_err}")
                 # If MCP is critical, you might want to yield an error here and stop.
