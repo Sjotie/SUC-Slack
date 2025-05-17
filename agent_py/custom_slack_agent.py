@@ -87,18 +87,18 @@ desired_max_tokens = 64000
 print(f"PY_AGENT_INFO: Setting max_tokens to {desired_max_tokens} for the agent (Claude 3 Sonnet safe limit).")
 
 # Construct the thinking parameter for Anthropic
-anthropic_thinking_params = {
-    "thinking": {
-        "type": "enabled",
-        "budget_tokens": 8000
-    }
-}
+# anthropic_thinking_params = {
+#     "thinking": {
+#         "type": "enabled",
+#         "budget_tokens": 8000
+#     }
+# }
 
 custom_model_settings = ModelSettings(
     max_tokens=desired_max_tokens,
     temperature=1,
     # Pass provider-specific parameters via extra_body
-    extra_body=anthropic_thinking_params
+    # extra_body=anthropic_thinking_params
 )
 
 print("--- Initializing Agent with MCP Servers ---")
