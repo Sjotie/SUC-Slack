@@ -55,13 +55,79 @@ export const app = new App({
     ],
 });
 
-// Initialize the app
+import axios from 'axios';
+import { MessageContent } from '../ai/interfaces/provider';
+
+function isImageFile(file: any): boolean {
+    return file && typeof file.mimetype === 'string' && file.mimetype.startsWith('image/');
+}
+
+export function registerMessageEvents(app: App) {
+    app.message(async ({ message, say, client, context, event }) => {
+        // Ignore bot messages, message changes, etc.
+        if ((message as any).subtype || (message as any).bot_id) {
+            return;
+        }
+
+        const userText = (message as any).text || '';
+        const files = (message as any).files || [];
+        const userId = (message as any).user;
+
+        const contentParts: MessageContent[] = [];
+
+        // 1. Add text part if present
+        if (userText && userText.trim()) {
+            contentParts.push({ type: 'input_text', text: userText.trim() });
+        }
+
+        // 2. Process images
+        if (files.length > 0) {
+            for (const file of files) {
+                if (isImageFile(file) && file.url_private_download) {
+                    try {
+                        const response = await axios.get(file.url_private_download, {
+                            headers: { 'Authorization': `Bearer ${context.botToken || env.SLACK_BOT_TOKEN}` },
+                            responseType: 'arraybuffer',
+                        });
+                        const base64Image = Buffer.from(response.data, 'binary').toString('base64');
+                        const dataUri = `data:${file.mimetype};base64,${base64Image}`;
+                        contentParts.push({ type: 'input_image', image_url: dataUri });
+                        logger.debug(`Processed image ${file.name} for user ${userId}`);
+                    } catch (error) {
+                        logger.error(`Failed to download or process image ${file.name}:`, error);
+                        await say(`Sorry, I couldn't process the image "${file.name}".`);
+                    }
+                }
+            }
+        }
+
+        if (contentParts.length === 0) {
+            logger.debug(`No processable content from user ${userId}.`);
+            return;
+        }
+
+        // TODO: Integrate with your backend call here.
+        // Example:
+        // const payloadToPython = {
+        //     prompt: contentParts,
+        //     history: [], // Populate with actual history
+        //     slackUserId: userId
+        // };
+        // await axios.post('http://localhost:8000/generate', payloadToPython);
+
+        logger.info(`Sending message with ${contentParts.length} parts to backend for user ${userId}`);
+    });
+}
+
 function initializeApp() {
     try {
         // Register middleware
         registerMiddleware(app);
 
-        // Import event handlers
+        // Register message event handler for image+text support
+        registerMessageEvents(app);
+
+        // Import event handlers (if you have other event handlers)
         require('./events');
 
         // Store the original start method
@@ -91,8 +157,6 @@ function initializeApp() {
     }
 }
 
-// Initialize the app
 initializeApp();
 
-// Export the initialized app
 export default app;

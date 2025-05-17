@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 import json
 import os
@@ -7,6 +7,7 @@ import asyncio
 import traceback  # Import traceback
 import anyio      # For ClosedResourceError handling
 import sys
+from typing import List, Union, Dict, Any
 
 from custom_slack_agent import slack_user_id_var   # shared ContextVar
 
@@ -19,6 +20,22 @@ if __name__ == "__main__":
 # Stuur zelf `AGENT_MAX_TURNS` in je .env om dit dynamisch te zetten.
 # ------------------------------------------------------------------
 MAX_AGENT_TURNS = int(os.getenv("AGENT_MAX_TURNS", "32"))
+
+# --- Models for multimodal content (text + image) ---
+class TextContent(BaseModel):
+    type: str
+    text: str
+
+class ImageContentItem(BaseModel):
+    type: str
+    image_url: str
+
+PromptContentItem = Union[TextContent, ImageContentItem, Dict[str, Any]]
+
+class ChatRequest(BaseModel):
+    prompt: Union[str, List[PromptContentItem]]
+    history: List[Dict[str, Any]]
+    slackUserId: str | None = None
 
 # The Agents SDK usually installs an *agents* top-level package.
 # If it isnt importable (e.g. the wheel exposes `openai_agents`
@@ -69,11 +86,6 @@ async def startup_event():
                 print(f"PY_AGENT_ERROR (startup): Traceback: {traceback.format_exc()}")
     else:
         print("PY_AGENT_INFO (startup): No active MCP servers configured for initial connection.")
-
-class ChatRequest(BaseModel):
-    prompt: str | list
-    history: list
-    slackUserId: str | None = None
 
 class ChatResponse(BaseModel):
     content: str
@@ -446,63 +458,108 @@ async def generate_stream(req: ChatRequest, request: Request):
     if req.slackUserId:
         print(f"PY_AGENT_DEBUG (/generate): Slack user ID received: {req.slackUserId}")
 
-
-    # --- Use history as the single source of truth for messages ---
-    # Do not append the prompt as a new user message if the last message in history is already the user's message.
-    # Assume the frontend/client is responsible for constructing the correct message history.
-
-    cleaned_messages = []
+    # --- Transform history and prompt for multimodal (vision) models ---
+    processed_history = []
     for hist_msg in req.history:
         if not (isinstance(hist_msg, dict) and "role" in hist_msg and "content" in hist_msg):
             continue
         if hist_msg["role"] == "system":
             print(f"PY_AGENT_DEBUG (/generate): Ignoring incoming system message from history: '{str(hist_msg.get('content', ''))[:100]}...'")
             continue
-        cleaned_msg = {"role": hist_msg["role"], "content": hist_msg["content"]}
-        if hist_msg["role"] == "tool":
-            if "tool_call_id" in hist_msg:
-                cleaned_msg["tool_call_id"] = hist_msg["tool_call_id"]
-            if "name" in hist_msg:
-                cleaned_msg["name"] = hist_msg["name"]
-        elif hist_msg["role"] == "assistant" and "tool_calls" in hist_msg:
-            cleaned_msg["tool_calls"] = hist_msg["tool_calls"]
-        cleaned_messages.append(cleaned_msg)
+
+        role = hist_msg["role"]
+        content = hist_msg["content"]
+
+        if isinstance(content, list):
+            transformed_content_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    item_dict = item
+                elif hasattr(item, 'dict'):
+                    item_dict = item.dict()
+                else:
+                    print(f"PY_AGENT_DEBUG (/generate): Skipping unknown item type in history content: {type(item)}")
+                    continue
+
+                if item_dict.get("type") == "input_text" or item_dict.get("type") == "text":
+                    transformed_content_parts.append({"type": "text", "text": item_dict.get("text", "")})
+                elif item_dict.get("type") == "input_image" or item_dict.get("type") == "image_url":
+                    img_url_value = item_dict.get("image_url")
+                    if isinstance(img_url_value, str):
+                        transformed_content_parts.append(
+                            {"type": "image_url", "image_url": {"url": img_url_value}}
+                        )
+                    elif isinstance(img_url_value, dict) and "url" in img_url_value:
+                        transformed_content_parts.append(
+                            {"type": "image_url", "image_url": img_url_value}
+                        )
+            processed_history.append({"role": role, "content": transformed_content_parts})
+        else:
+            processed_history.append({"role": role, "content": content})
+
+    # Current prompt from user (req.prompt)
+    current_user_content = []
+    if isinstance(req.prompt, str):
+        current_user_content.append({"type": "text", "text": req.prompt})
+    elif isinstance(req.prompt, list):
+        for item in req.prompt:
+            if isinstance(item, dict):
+                item_dict = item
+            elif hasattr(item, 'dict'):
+                item_dict = item.dict()
+            else:
+                print(f"PY_AGENT_DEBUG (/generate): Skipping unknown item type in prompt content: {type(item)}")
+                continue
+
+            if item_dict.get("type") == "input_text" or item_dict.get("type") == "text":
+                current_user_content.append({"type": "text", "text": item_dict.get("text", "")})
+            elif item_dict.get("type") == "input_image" or item_dict.get("type") == "image_url":
+                img_url_value = item_dict.get("image_url")
+                if isinstance(img_url_value, str):
+                    current_user_content.append(
+                        {"type": "image_url", "image_url": {"url": img_url_value}}
+                    )
+                elif isinstance(img_url_value, dict) and "url" in img_url_value:
+                    current_user_content.append(
+                        {"type": "image_url", "image_url": img_url_value}
+                    )
+
+    cleaned_messages = processed_history
+    if current_user_content:
+        cleaned_messages.append({"role": "user", "content": current_user_content})
+    else:
+        if not cleaned_messages or cleaned_messages[-1]["role"] != "user":
+            print("PY_AGENT_DEBUG (/generate): No current user content to send after processing prompt.")
 
     print(f"PY_AGENT_DEBUG (/generate): Cleaned messages prepared for agent. Count: {len(cleaned_messages)}")
     if cleaned_messages:
-        print(f"PY_AGENT_DEBUG (/generate): Last cleaned message (current user prompt part): {cleaned_messages[-1]}")
+        print(f"PY_AGENT_DEBUG (/generate): Last cleaned message (current user prompt part): {str(cleaned_messages[-1])[:500]}...")
 
     # Per-request MCP connection check and re-establishment
     if ACTIVE_MCP_SERVERS:
         print(f"PY_AGENT_DEBUG (/generate): Checking/Re-establishing connection to {len(ACTIVE_MCP_SERVERS)} MCP server(s) before agent run...")
         for server_instance in ACTIVE_MCP_SERVERS:
             try:
-                # Always invalidate cache before connect if caching is on,
-                # as connect() might establish a new session.
                 if hasattr(server_instance, 'cache_tools_list') and server_instance.cache_tools_list:
                     if hasattr(server_instance, 'invalidate_tools_cache'):
                         server_instance.invalidate_tools_cache()
                         print(f"PY_AGENT_DEBUG (/generate): Invalidated tools cache for MCP server '{server_instance.name}'.")
                 try:
-                    await server_instance.connect()  # Attempt to connect or re-establish
+                    await server_instance.connect()
                     print(f"PY_AGENT_DEBUG (/generate): MCP server '{server_instance.name}' connect() call completed for request.")
                 except Exception as mcp_req_conn_err_single:
                     print(f"PY_AGENT_ERROR (/generate): Failed during per-request MCP server connect for '{server_instance.name}': {mcp_req_conn_err_single}. It may be unavailable for this request.")
-                    # The agent will still have this MCP in its list, but tool calls to it will likely fail.
-                    # This change primarily makes the /generate endpoint itself more robust.
             except Exception as mcp_req_conn_err:
                 print(f"PY_AGENT_ERROR (/generate): Failed during per-request MCP server connect for '{server_instance.name}': {mcp_req_conn_err}")
-                # If MCP is critical, you might want to yield an error here and stop.
-                # Example:
-                # return StreamingResponse(
-                #     (f"{json.dumps({'type': 'error', 'data': f'Critical MCP connection failed for {server_instance.name}: {str(mcp_req_conn_err)}'})}\n" async for _ in []),
-                #     media_type="application/x-json-stream"
-                # )
-
 
     async def managed_stream_wrapper():
         print("PY_AGENT_DEBUG (managed_stream_wrapper): Starting.")
         try:
+            if not cleaned_messages or not cleaned_messages[-1].get("content"):
+                print("PY_AGENT_ERROR (managed_stream_wrapper): No content to send to agent or last message is malformed.")
+                yield f"{json.dumps({'type': 'error', 'data': 'No content to process after parsing the request.'})}\n"
+                return
+
             async for event_json_line in stream_agent_events(_agent, cleaned_messages, max_retries=2):
                 yield event_json_line
         except Exception as wrap_err:
@@ -511,10 +568,9 @@ async def generate_stream(req: ChatRequest, request: Request):
             try:
                 yield f"{json.dumps({'type': 'error', 'data': f'Stream wrapper error: {str(wrap_err)}'})}\n"
             except Exception:
-                pass # Avoid error in error reporting
+                pass
         finally:
             print("PY_AGENT_DEBUG (managed_stream_wrapper): Finished.")
-
 
     return StreamingResponse(
         managed_stream_wrapper(),
