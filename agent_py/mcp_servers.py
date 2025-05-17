@@ -378,6 +378,10 @@ slack_team_id = os.getenv("SLACK_TEAM_ID")
 if not slack_bot_token or not slack_team_id:
     print("WARNING: SLACK_BOT_TOKEN or SLACK_TEAM_ID is not set. Slack MCP may not start correctly.")
 
+# Ensure a unique config directory for Slack MCP
+slack_config_path = pathlib.Path(os.getcwd()) / ".mcp_configs" / "slack"
+slack_config_path.mkdir(parents=True, exist_ok=True)
+
 slack_mcp_server = MCPServerStdio(
     name="slack",
     params={
@@ -389,7 +393,7 @@ slack_mcp_server = MCPServerStdio(
         "env": {
             "SLACK_BOT_TOKEN": slack_bot_token or "",
             "SLACK_TEAM_ID": slack_team_id or "",
-            "XDG_CONFIG_HOME": str(default_mcp_config_path),
+            "XDG_CONFIG_HOME": str(slack_config_path),
         }
     },
     client_session_timeout_seconds=60.0,
