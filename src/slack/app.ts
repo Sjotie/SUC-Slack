@@ -89,8 +89,24 @@ export function registerMessageEvents(app: App) {
                             headers: { 'Authorization': `Bearer ${context.botToken || env.SLACK_BOT_TOKEN}` },
                             responseType: 'arraybuffer',
                         });
+                        // Only allow mimetypes supported by Anthropic: image/jpeg, image/png, image/gif, image/webp
+                        let allowedMime = file.mimetype;
+                        if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(allowedMime)) {
+                            // Try to map common aliases/extensions to allowed types
+                            if (allowedMime === "image/jpg") {
+                                allowedMime = "image/jpeg";
+                            } else if (allowedMime === "image/x-png") {
+                                allowedMime = "image/png";
+                            } else if (allowedMime === "image/x-ms-bmp" || allowedMime === "image/bmp") {
+                                // Anthropic does not support BMP, skip
+                                logger.warn(`Skipping unsupported image type: ${file.mimetype} for file ${file.name}`);
+                                continue;
+                            } else {
+                                logger.warn(`Unknown/unsupported image mimetype: ${file.mimetype} for file ${file.name}, attempting to send as-is`);
+                            }
+                        }
                         const base64Image = Buffer.from(response.data, 'binary').toString('base64');
-                        const dataUri = `data:${file.mimetype};base64,${base64Image}`;
+                        const dataUri = `data:${allowedMime};base64,${base64Image}`;
                         contentParts.push({ type: 'input_image', image_url: dataUri });
                         logger.debug(`Processed image ${file.name} for user ${userId}`);
                     } catch (error) {
