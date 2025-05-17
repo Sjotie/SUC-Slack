@@ -163,11 +163,10 @@ def format_message_content_for_agents_sdk(content_input: Union[str, List[Dict[st
 
     return sdk_formatted_parts
 
-from openai.types.beta.threads.runs import ToolOutput
 try:
-    from openai_agents.events import RunItemStreamEvent
+    from openai_agents.events import ToolOutput
 except ImportError:
-    RunItemStreamEvent = None  # Fallback if not available
+    ToolOutput = None  # Fallback if not available
 
 from openai.types.responses import (
     ResponseTextDeltaEvent,
